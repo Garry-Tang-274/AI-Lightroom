@@ -24,3 +24,13 @@ def test_main_window_starts(qtbot):
     assert window.windowTitle() == "AI Lightroom"
     assert not window.export_action.isEnabled()
 
+
+def test_manual_slider_updates_the_shared_editor_state(qtbot, tmp_path):
+    source = tmp_path / "sample.jpg"
+    Image.new("RGB", (320, 200), (80, 100, 120)).save(source)
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.open_image(str(source))
+    window.adjustments.controls["exposure"].slider.setValue(35)
+    assert window.state.basic.exposure == 0.35
+    assert window.preview_source.shape == (200, 320, 3)

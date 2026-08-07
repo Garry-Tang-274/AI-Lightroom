@@ -15,6 +15,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.core.editor_state import EditorState
+
 
 @dataclass(frozen=True, slots=True)
 class SliderSpec:
@@ -134,3 +136,6 @@ class AdjustmentPanel(QScrollArea):
     def set_enabled_for_image(self, enabled: bool) -> None:
         self.widget().setEnabled(enabled)
 
+    def set_state(self, state: EditorState) -> None:
+        for key, control in self.controls.items():
+            control.set_value(getattr(state.basic, key))

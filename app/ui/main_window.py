@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QSettings, Qt
+from PySide6.QtCore import QSettings, QThreadPool, QTimer, Qt
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -20,6 +20,8 @@ from PySide6.QtWidgets import (
 from app.ui.adjustment_panel import AdjustmentPanel
 from app.ui.ai_panel import AIPanel
 from app.ui.image_view import ImageView
+from app.ui.render_worker import PreviewRenderWorker
+from app.core.editor_state import EditorState
 from app.utils.io_utils import LoadedImage, load_image, make_preview
 
 
@@ -31,6 +33,15 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(1050, 680)
         self.settings = QSettings("AI Lightroom", "AI Lightroom")
         self.loaded_image: LoadedImage | None = None
+        self.state = EditorState()
+        self.preview_source = None
+        self._render_generation = 0
+        self._render_pool = QThreadPool(self)
+        self._render_pool.setMaxThreadCount(2)
+        self._render_timer = QTimer(self)
+        self._render_timer.setSingleShot(True)
+        self._render_timer.setInterval(75)
+        self._render_timer.timeout.connect(self._start_preview_render)
         self._build_actions()
         self._build_menu()
         self._build_toolbar()
@@ -87,6 +98,8 @@ class MainWindow(QMainWindow):
         self.adjustments = AdjustmentPanel()
         self.ai_panel = AIPanel()
         self.ai_panel.prompt_submitted.connect(self._ai_placeholder)
+        self.adjustments.adjustment_changed.connect(self._set_basic_adjustment)
+        self.adjustments.reset_requested.connect(self.reset_edits)
 
         left_tabs = QTabWidget()
         history = QListWidget()
@@ -134,6 +147,9 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "无法打开图片", str(exc))
             return
         self.loaded_image = loaded
+        self.state = EditorState()
+        self.preview_source = preview
+        self.adjustments.set_state(self.state)
         self.image_view.set_image(preview)
         self.settings.setValue("last_open_dir", str(loaded.path.parent))
         self.setWindowTitle(f"{loaded.path.name} — AI Lightroom")
@@ -143,6 +159,45 @@ class MainWindow(QMainWindow):
         self.adjustments.set_enabled_for_image(True)
         self.ai_panel.set_ready(True)
         self.export_action.setEnabled(True)
+
+    def _set_basic_adjustment(self, key: str, value: float) -> None:
+        if self.preview_source is None:
+            return
+        try:
+            self.state.basic = self.state.basic.with_value(key, value)
+        except (KeyError, ValueError):
+            return
+        self._render_generation += 1
+        self._render_timer.start()
+
+    def reset_edits(self) -> None:
+        if self.preview_source is None:
+            return
+        self.state = EditorState()
+        self.adjustments.set_state(self.state)
+        self._render_generation += 1
+        self._render_timer.stop()
+        self._start_preview_render()
+
+    def _start_preview_render(self) -> None:
+        if self.preview_source is None:
+            return
+        generation = self._render_generation
+        worker = PreviewRenderWorker(self.preview_source, self.state, generation)
+        worker.signals.finished.connect(self._preview_rendered)
+        worker.signals.failed.connect(self._preview_failed)
+        self._render_pool.start(worker)
+
+    def _preview_rendered(self, pixels, generation: int) -> None:
+        if generation != self._render_generation:
+            return
+        self.image_view.set_image(pixels)
+        self.statusBar().showMessage(f"{self.loaded_image.description}  •  已编辑")
+
+    def _preview_failed(self, details: str, generation: int) -> None:
+        if generation != self._render_generation:
+            return
+        self.statusBar().showMessage("预览渲染失败；已保留当前参数")
 
     def _ai_placeholder(self, prompt: str) -> None:
         self.ai_panel.add_assistant_message("AI 编辑引擎将在下一开发阶段接入；当前图片已准备好。")
@@ -156,4 +211,3 @@ class MainWindow(QMainWindow):
             "关于 AI Lightroom",
             "AI Lightroom 0.1\n非破坏式桌面照片编辑器",
         )
-
