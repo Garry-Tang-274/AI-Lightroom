@@ -1,0 +1,14 @@
+PySide6-Essentials>=6.7,<7
+numpy>=2.0,<3
+opencv-python-headless>=4.10,<5
+Pillow>=10.4,<13
+pydantic>=2.8,<3
+python-dotenv>=1.0,<2
+google-genai>=1.0,<2
+platformdirs>=4.2,<5
+keyring>=25,<27
+scipy>=1.14,<2
+psutil>=6,<8
+pytest>=8.2,<10
+pytest-qt>=4.4,<5
+PyInstaller>=6.10,<7
