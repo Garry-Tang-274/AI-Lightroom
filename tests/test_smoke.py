@@ -5,6 +5,7 @@ from PIL import Image
 
 from app.ui.main_window import MainWindow
 from app.utils.io_utils import load_image, make_preview
+from app.utils.config import RuntimeSettings
 
 
 def test_load_image_and_preview(tmp_path):
@@ -53,3 +54,21 @@ def test_mask_layer_ui_and_state_stay_synchronized(qtbot, tmp_path):
     assert window.mask_panel.selected_mask_id == layer.id
     window._set_local_adjustment(layer.id, "exposure", -0.4)
     assert window.state.masks[0].adjustments.exposure == -0.4
+
+
+def test_offline_ai_command_updates_visible_state(qtbot, tmp_path, monkeypatch):
+    source = tmp_path / "ai-source.jpg"
+    pixels = np.zeros((180, 300, 3), dtype=np.uint8)
+    pixels[:90] = (80, 145, 220)
+    pixels[90:] = (95, 85, 60)
+    Image.fromarray(pixels).save(source)
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.open_image(str(source))
+    monkeypatch.setattr(window.settings_manager, "runtime", lambda: RuntimeSettings(provider="mock"))
+    monkeypatch.setattr(window.settings_manager, "gemini_api_key", lambda: "")
+    window._run_ai_edit("做出轻微电影感，天空压一点，但不要把地面搞暗")
+    qtbot.waitUntil(lambda: window._ai_worker is None, timeout=5000)
+    assert window.state.basic.contrast > 0
+    assert any(layer.type.value == "sky" for layer in window.state.masks)
+    assert window.adjustments.controls["contrast"].slider.value() > 0

@@ -20,9 +20,11 @@ from PySide6.QtWidgets import (
 
 from app.ui.adjustment_panel import AdjustmentPanel
 from app.ui.ai_panel import AIPanel
+from app.ui.ai_worker import AIEditWorker
 from app.ui.image_view import ImageView
 from app.ui.mask_panel import MaskPanel
 from app.ui.render_worker import PreviewRenderWorker
+from app.ui.settings_dialog import SettingsDialog
 from app.ui.export_worker import ExportWorker
 from app.core.editor_state import (
     BrushPoint,
@@ -36,6 +38,7 @@ from app.core.editor_state import (
 )
 from app.core.history import HistoryManager
 from app.utils.io_utils import LoadedImage, load_image, make_preview
+from app.utils.config import SettingsManager
 
 
 class MainWindow(QMainWindow):
@@ -44,14 +47,17 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("AI Lightroom")
         self.resize(1480, 920)
         self.setMinimumSize(1050, 680)
-        self.settings = QSettings("AI Lightroom", "AI Lightroom")
+        self.settings_manager = SettingsManager()
+        self.runtime_settings = self.settings_manager.runtime()
+        self.settings = self.settings_manager.store
         self.loaded_image: LoadedImage | None = None
         self.state = EditorState()
         self.history = HistoryManager()
         self.preview_source = None
+        self.current_preview = None
         self._render_generation = 0
         self._render_pool = QThreadPool(self)
-        self._render_pool.setMaxThreadCount(2)
+        self._render_pool.setMaxThreadCount(self.runtime_settings.worker_threads)
         self._render_timer = QTimer(self)
         self._render_timer.setSingleShot(True)
         self._render_timer.setInterval(75)
@@ -62,6 +68,8 @@ class MainWindow(QMainWindow):
         self._history_timer.timeout.connect(self._flush_history)
         self._pending_history_label = "调整参数"
         self._export_worker = None
+        self._ai_worker = None
+        self._ai_details = ""
         self._build_actions()
         self._build_menu()
         self._build_toolbar()
@@ -97,11 +105,15 @@ class MainWindow(QMainWindow):
         self.reset_action = QAction("重置所有调整", self)
         self.reset_action.setShortcut(QKeySequence("Ctrl+R"))
         self.reset_action.triggered.connect(self.reset_edits)
+        self.settings_action = QAction("设置…", self)
+        self.settings_action.triggered.connect(self.open_settings)
 
     def _build_menu(self) -> None:
         file_menu = self.menuBar().addMenu("文件")
         file_menu.addAction(self.open_action)
         file_menu.addAction(self.export_action)
+        file_menu.addSeparator()
+        file_menu.addAction(self.settings_action)
         file_menu.addSeparator()
         file_menu.addAction(self.exit_action)
         edit_menu = self.menuBar().addMenu("编辑")
@@ -130,7 +142,8 @@ class MainWindow(QMainWindow):
         self.image_view = ImageView()
         self.adjustments = AdjustmentPanel()
         self.ai_panel = AIPanel()
-        self.ai_panel.prompt_submitted.connect(self._ai_placeholder)
+        self.ai_panel.prompt_submitted.connect(self._run_ai_edit)
+        self.ai_panel.details_requested.connect(self._show_ai_details)
         self.adjustments.adjustment_changed.connect(self._set_basic_adjustment)
         self.adjustments.hsl_changed.connect(self._set_hsl_adjustment)
         self.adjustments.curve_changed.connect(self._set_curve)
@@ -184,7 +197,7 @@ class MainWindow(QMainWindow):
     def open_image(self, filename: str) -> None:
         try:
             loaded = load_image(filename)
-            preview = make_preview(loaded.pixels)
+            preview = make_preview(loaded.pixels, self.runtime_settings.preview_size)
         except Exception as exc:  # user-facing boundary
             QMessageBox.critical(self, "无法打开图片", str(exc))
             return
@@ -192,6 +205,7 @@ class MainWindow(QMainWindow):
         self.state = EditorState()
         self.history.reset(self.state, f"打开：{loaded.path.name}")
         self.preview_source = preview
+        self.current_preview = preview.copy()
         self.adjustments.set_state(self.state)
         self.mask_panel.set_state(self.state)
         self.image_view.set_image(preview)
@@ -404,9 +418,9 @@ class MainWindow(QMainWindow):
         path = Path(filename)
         if not path.suffix:
             path = path.with_suffix(".png" if selected.startswith("PNG") else ".jpg")
-        quality = 92
+        quality = self.runtime_settings.export_jpeg_quality
         if path.suffix.lower() in {".jpg", ".jpeg"}:
-            quality, accepted = QInputDialog.getInt(self, "JPEG 质量", "质量（1–100）", 92, 1, 100)
+            quality, accepted = QInputDialog.getInt(self, "JPEG 质量", "质量（1–100）", quality, 1, 100)
             if not accepted:
                 return
         self.export_action.setEnabled(False)
@@ -447,6 +461,7 @@ class MainWindow(QMainWindow):
         if generation != self._render_generation:
             return
         self.image_view.set_image(pixels)
+        self.current_preview = pixels
         self.statusBar().showMessage(f"{self.loaded_image.description}  •  已编辑")
 
     def _preview_failed(self, details: str, generation: int) -> None:
@@ -454,8 +469,75 @@ class MainWindow(QMainWindow):
             return
         self.statusBar().showMessage("预览渲染失败；已保留当前参数")
 
-    def _ai_placeholder(self, prompt: str) -> None:
-        self.ai_panel.add_assistant_message("AI 编辑引擎将在下一开发阶段接入；当前图片已准备好。")
+    def _run_ai_edit(self, prompt: str) -> None:
+        if self.preview_source is None:
+            self.ai_panel.add_assistant_message("请先打开一张图片。")
+            return
+        if self._ai_worker is not None:
+            self.ai_panel.add_assistant_message("上一条指令仍在处理中，请稍候。")
+            return
+        self._flush_history()
+        self.runtime_settings = self.settings_manager.runtime()
+        history_summary = [entry.label for entry in self.history.entries[-8:]]
+        worker = AIEditWorker(
+            prompt,
+            self.preview_source,
+            self.state,
+            history_summary,
+            self.runtime_settings,
+            self.settings_manager.gemini_api_key(),
+            self.mask_panel.selected_mask_id,
+        )
+        self._ai_worker = worker
+        worker.signals.finished.connect(self._ai_finished)
+        worker.signals.failed.connect(self._ai_failed)
+        self.ai_panel.set_busy(True)
+        self.statusBar().showMessage("AI 正在分析当前画面和编辑状态…")
+        self._render_pool.start(worker)
+
+    def _ai_finished(self, result) -> None:
+        self._ai_worker = None
+        self.state = result.state
+        self.adjustments.set_state(self.state)
+        self.mask_panel.set_state(self.state)
+        self.history.push(self.state, f"AI：{result.final_plan.summary}")
+        self._refresh_history_ui()
+        self._render_generation += 1
+        self._render_timer.stop()
+        self._start_preview_render()
+        self.ai_panel.set_busy(False)
+        self.ai_panel.set_result_info(result.provider_name, True)
+        self.ai_panel.add_assistant_message(result.final_plan.summary)
+        details = [
+            f"方案：{result.final_plan.summary}",
+            f"依据：{result.final_plan.reasoning_summary}",
+            f"Provider：{result.provider_name}",
+            f"视觉调用：{result.vision_calls}",
+        ]
+        if result.changed_fields:
+            details.append("\n参数与局部调整：\n- " + "\n- ".join(result.changed_fields))
+        if result.created_masks:
+            details.append("\n创建蒙版：\n- " + "\n- ".join(result.created_masks))
+        self._ai_details = "\n".join(details)
+
+    def _ai_failed(self, traceback_text: str) -> None:
+        self._ai_worker = None
+        self.ai_panel.set_busy(False)
+        last_line = next((line.strip() for line in reversed(traceback_text.splitlines()) if line.strip()), "未知错误")
+        self.ai_panel.add_assistant_message(f"这次 AI 请求失败：{last_line}。当前编辑状态未改变。")
+        self.statusBar().showMessage("AI 请求失败；当前编辑未改变", 8000)
+
+    def _show_ai_details(self) -> None:
+        if self._ai_details:
+            QMessageBox.information(self, "AI 调整详情", self._ai_details)
+
+    def open_settings(self) -> None:
+        dialog = SettingsDialog(self.settings_manager, self)
+        if dialog.exec():
+            self.runtime_settings = self.settings_manager.runtime()
+            self._render_pool.setMaxThreadCount(self.runtime_settings.worker_threads)
+            provider = "Gemini" if self.settings_manager.gemini_api_key() and self.runtime_settings.provider != "mock" else "Mock（离线）"
+            self.ai_panel.provider_label.setText(f"当前将使用：{provider}")
 
     def _show_about(self) -> None:
         QMessageBox.about(
