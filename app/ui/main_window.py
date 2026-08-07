@@ -21,7 +21,7 @@ from app.ui.adjustment_panel import AdjustmentPanel
 from app.ui.ai_panel import AIPanel
 from app.ui.image_view import ImageView
 from app.ui.render_worker import PreviewRenderWorker
-from app.core.editor_state import EditorState
+from app.core.editor_state import ColorWheel, EditorState, HSLAdjustment, HSLColor
 from app.utils.io_utils import LoadedImage, load_image, make_preview
 
 
@@ -99,6 +99,9 @@ class MainWindow(QMainWindow):
         self.ai_panel = AIPanel()
         self.ai_panel.prompt_submitted.connect(self._ai_placeholder)
         self.adjustments.adjustment_changed.connect(self._set_basic_adjustment)
+        self.adjustments.hsl_changed.connect(self._set_hsl_adjustment)
+        self.adjustments.curve_changed.connect(self._set_curve)
+        self.adjustments.color_grading_changed.connect(self._set_color_grading)
         self.adjustments.reset_requested.connect(self.reset_edits)
 
         left_tabs = QTabWidget()
@@ -167,6 +170,32 @@ class MainWindow(QMainWindow):
             self.state.basic = self.state.basic.with_value(key, value)
         except (KeyError, ValueError):
             return
+        self._render_generation += 1
+        self._render_timer.start()
+
+    def _set_hsl_adjustment(self, color: str, key: str, value: float) -> None:
+        if self.preview_source is None:
+            return
+        target = self.state.hsl[HSLColor(color)].model_dump()
+        target[key] = value
+        self.state.hsl[HSLColor(color)] = HSLAdjustment.model_validate(target)
+        self._queue_preview_render()
+
+    def _set_curve(self, channel: str, curve) -> None:
+        if self.preview_source is None:
+            return
+        setattr(self.state.curves, channel, curve)
+        self._queue_preview_render()
+
+    def _set_color_grading(self, region: str, key: str, value: float) -> None:
+        if self.preview_source is None:
+            return
+        target = getattr(self.state.color_grading, region).model_dump()
+        target[key] = value
+        setattr(self.state.color_grading, region, ColorWheel.model_validate(target))
+        self._queue_preview_render()
+
+    def _queue_preview_render(self) -> None:
         self._render_generation += 1
         self._render_timer.start()
 

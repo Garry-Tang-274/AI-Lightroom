@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QFormLayout,
+    QComboBox,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -15,7 +16,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app.core.editor_state import EditorState
+from app.core.editor_state import EditorState, HSLColor
+from app.ui.curve_editor import CurvePanel
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,6 +91,9 @@ class ParameterSlider(QWidget):
 
 class AdjustmentPanel(QScrollArea):
     adjustment_changed = Signal(str, float)
+    hsl_changed = Signal(str, str, float)
+    curve_changed = Signal(str, object)
+    color_grading_changed = Signal(str, str, float)
     reset_requested = Signal()
 
     def __init__(self, parent=None) -> None:
@@ -119,23 +124,97 @@ class AdjustmentPanel(QScrollArea):
             basic_layout.addWidget(control)
         layout.addWidget(basic)
 
-        for name, note in (
-            ("HSL / 颜色", "八色相独立调整"),
-            ("曲线", "RGB 与分通道曲线"),
-            ("局部调整", "渐变、范围和智能蒙版"),
+        hsl_group = QGroupBox("HSL / 颜色")
+        hsl_layout = QVBoxLayout(hsl_group)
+        self.hsl_selector = QComboBox()
+        for color, label in (
+            (HSLColor.RED, "红色"),
+            (HSLColor.ORANGE, "橙色"),
+            (HSLColor.YELLOW, "黄色"),
+            (HSLColor.GREEN, "绿色"),
+            (HSLColor.AQUA, "青色"),
+            (HSLColor.BLUE, "蓝色"),
+            (HSLColor.PURPLE, "紫色"),
+            (HSLColor.MAGENTA, "洋红"),
         ):
-            group = QGroupBox(name)
-            group_layout = QFormLayout(group)
-            muted = QLabel(note)
-            muted.setStyleSheet("color: #858b92;")
-            group_layout.addRow(muted)
-            layout.addWidget(group)
+            self.hsl_selector.addItem(label, color.value)
+        hsl_layout.addWidget(self.hsl_selector)
+        self.hsl_controls: dict[str, ParameterSlider] = {}
+        for spec in (
+            SliderSpec("hue", "色相", -100, 100),
+            SliderSpec("saturation", "饱和度", -100, 100),
+            SliderSpec("luminance", "明亮度", -100, 100),
+        ):
+            control = ParameterSlider(spec)
+            control.value_changed.connect(self._hsl_value_changed)
+            self.hsl_controls[spec.key] = control
+            hsl_layout.addWidget(control)
+        self.hsl_selector.currentIndexChanged.connect(self._show_selected_hsl)
+        layout.addWidget(hsl_group)
+
+        curve_group = QGroupBox("曲线")
+        curve_layout = QVBoxLayout(curve_group)
+        self.curve_panel = CurvePanel()
+        self.curve_panel.curve_changed.connect(self.curve_changed)
+        curve_layout.addWidget(self.curve_panel)
+        layout.addWidget(curve_group)
+
+        grading_group = QGroupBox("色彩分级")
+        grading_layout = QVBoxLayout(grading_group)
+        self.grading_selector = QComboBox()
+        self.grading_selector.addItem("阴影", "shadows")
+        self.grading_selector.addItem("中间调", "midtones")
+        self.grading_selector.addItem("高光", "highlights")
+        grading_layout.addWidget(self.grading_selector)
+        self.grading_controls: dict[str, ParameterSlider] = {}
+        for spec in (
+            SliderSpec("hue", "色相", 0, 360),
+            SliderSpec("saturation", "饱和度", 0, 100),
+            SliderSpec("luminance", "明亮度", -100, 100),
+        ):
+            control = ParameterSlider(spec)
+            control.value_changed.connect(self._grading_value_changed)
+            self.grading_controls[spec.key] = control
+            grading_layout.addWidget(control)
+        self.grading_selector.currentIndexChanged.connect(self._show_selected_grading)
+        layout.addWidget(grading_group)
+
+        masks_placeholder = QGroupBox("局部调整")
+        masks_layout = QFormLayout(masks_placeholder)
+        muted = QLabel("渐变、范围和智能蒙版")
+        muted.setStyleSheet("color: #858b92;")
+        masks_layout.addRow(muted)
+        layout.addWidget(masks_placeholder)
         layout.addStretch()
         self.setWidget(container)
+        self._state = EditorState()
 
     def set_enabled_for_image(self, enabled: bool) -> None:
         self.widget().setEnabled(enabled)
 
     def set_state(self, state: EditorState) -> None:
+        self._state = state.snapshot()
         for key, control in self.controls.items():
             control.set_value(getattr(state.basic, key))
+        self.curve_panel.set_state(state)
+        self._show_selected_hsl()
+        self._show_selected_grading()
+
+    def _show_selected_hsl(self) -> None:
+        color = HSLColor(self.hsl_selector.currentData())
+        values = self._state.hsl[color]
+        for key, control in self.hsl_controls.items():
+            control.set_value(getattr(values, key))
+
+    def _hsl_value_changed(self, key: str, value: float) -> None:
+        color = self.hsl_selector.currentData()
+        self.hsl_changed.emit(color, key, value)
+
+    def _show_selected_grading(self) -> None:
+        region = self.grading_selector.currentData()
+        values = getattr(self._state.color_grading, region)
+        for key, control in self.grading_controls.items():
+            control.set_value(getattr(values, key))
+
+    def _grading_value_changed(self, key: str, value: float) -> None:
+        self.color_grading_changed.emit(self.grading_selector.currentData(), key, value)

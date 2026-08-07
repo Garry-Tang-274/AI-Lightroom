@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from app.core.editor_state import CurvePoint, EditorState, ToneCurve
+from app.core.editor_state import CurvePoint, EditorState, HSLAdjustment, HSLColor, ToneCurve
 from app.core.image_processor import render_image
 
 
@@ -46,3 +46,14 @@ def test_exposure_and_curve_have_expected_direction():
     darker = render_image(source, state)
     assert darker.mean() < source.mean()
 
+
+def test_hsl_targets_the_selected_color_family():
+    source = np.zeros((20, 40, 3), dtype=np.uint8)
+    source[:, :20] = (220, 35, 35)
+    source[:, 20:] = (35, 50, 220)
+    state = EditorState()
+    state.hsl[HSLColor.RED] = HSLAdjustment(saturation=-100)
+    rendered = render_image(source, state)
+    red_change = np.abs(rendered[:, :20].astype(int) - source[:, :20]).mean()
+    blue_change = np.abs(rendered[:, 20:].astype(int) - source[:, 20:]).mean()
+    assert red_change > blue_change * 3
