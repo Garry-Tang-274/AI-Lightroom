@@ -18,6 +18,9 @@ class LoadedImage:
     height: int
     mode: str
     file_size: int
+    icc_profile: bytes | None = None
+    exif: bytes | None = None
+    dpi: tuple[float, float] | None = None
 
     @property
     def description(self) -> str:
@@ -34,6 +37,9 @@ def load_image(path: str | Path) -> LoadedImage:
     with Image.open(source) as opened:
         image = ImageOps.exif_transpose(opened)
         original_mode = image.mode
+        icc_profile = image.info.get("icc_profile")
+        exif = image.info.get("exif")
+        dpi = image.info.get("dpi")
         if image.mode == "RGBA":
             background = Image.new("RGB", image.size, (24, 24, 24))
             background.paste(image, mask=image.getchannel("A"))
@@ -50,6 +56,9 @@ def load_image(path: str | Path) -> LoadedImage:
         height=height,
         mode=original_mode,
         file_size=source.stat().st_size,
+        icc_profile=icc_profile,
+        exif=exif,
+        dpi=dpi,
     )
 
 
@@ -72,4 +81,3 @@ def make_preview(pixels: np.ndarray, max_edge: int = 1600) -> np.ndarray:
         return pixels.copy()
     new_size = (max(1, round(width * scale)), max(1, round(height * scale)))
     return np.asarray(Image.fromarray(pixels).resize(new_size, Image.Resampling.LANCZOS), dtype=np.uint8)
-

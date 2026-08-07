@@ -34,3 +34,8 @@ def test_manual_slider_updates_the_shared_editor_state(qtbot, tmp_path):
     window.adjustments.controls["exposure"].slider.setValue(35)
     assert window.state.basic.exposure == 0.35
     assert window.preview_source.shape == (200, 320, 3)
+    window._flush_history()
+    window.undo()
+    assert window.state.basic.exposure == 0
+    window.redo()
+    assert window.state.basic.exposure == 0.35
