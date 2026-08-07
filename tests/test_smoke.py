@@ -39,3 +39,17 @@ def test_manual_slider_updates_the_shared_editor_state(qtbot, tmp_path):
     assert window.state.basic.exposure == 0
     window.redo()
     assert window.state.basic.exposure == 0.35
+
+
+def test_mask_layer_ui_and_state_stay_synchronized(qtbot, tmp_path):
+    source = tmp_path / "mask-source.png"
+    Image.new("RGB", (300, 180), (90, 140, 200)).save(source)
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.open_image(str(source))
+    window._create_mask("sky")
+    assert len(window.state.masks) == 1
+    layer = window.state.masks[0]
+    assert window.mask_panel.selected_mask_id == layer.id
+    window._set_local_adjustment(layer.id, "exposure", -0.4)
+    assert window.state.masks[0].adjustments.exposure == -0.4

@@ -21,9 +21,19 @@ from PySide6.QtWidgets import (
 from app.ui.adjustment_panel import AdjustmentPanel
 from app.ui.ai_panel import AIPanel
 from app.ui.image_view import ImageView
+from app.ui.mask_panel import MaskPanel
 from app.ui.render_worker import PreviewRenderWorker
 from app.ui.export_worker import ExportWorker
-from app.core.editor_state import ColorWheel, EditorState, HSLAdjustment, HSLColor
+from app.core.editor_state import (
+    BrushPoint,
+    BrushStroke,
+    ColorWheel,
+    EditorState,
+    HSLAdjustment,
+    HSLColor,
+    MaskLayer,
+    MaskType,
+)
 from app.core.history import HistoryManager
 from app.utils.io_utils import LoadedImage, load_image, make_preview
 
@@ -130,13 +140,18 @@ class MainWindow(QMainWindow):
         left_tabs = QTabWidget()
         history = QListWidget()
         history.addItem("打开图片后显示历史记录")
-        masks = QListWidget()
-        masks.addItem("尚无蒙版")
+        masks = MaskPanel()
         left_tabs.addTab(history, "历史")
         left_tabs.addTab(masks, "蒙版")
         self.history_list = history
         self.history_list.currentRowChanged.connect(self._history_row_selected)
-        self.mask_list = masks
+        self.mask_panel = masks
+        self.mask_panel.create_mask_requested.connect(self._create_mask)
+        self.mask_panel.remove_mask_requested.connect(self._remove_mask)
+        self.mask_panel.local_adjustment_changed.connect(self._set_local_adjustment)
+        self.mask_panel.mask_property_changed.connect(self._set_mask_property)
+        self.mask_panel.brush_mode_changed.connect(self.image_view.set_brush_mode)
+        self.image_view.brush_stroke_finished.connect(self._add_brush_stroke)
 
         right = QWidget()
         right_layout = QVBoxLayout(right)
@@ -178,6 +193,7 @@ class MainWindow(QMainWindow):
         self.history.reset(self.state, f"打开：{loaded.path.name}")
         self.preview_source = preview
         self.adjustments.set_state(self.state)
+        self.mask_panel.set_state(self.state)
         self.image_view.set_image(preview)
         self.settings.setValue("last_open_dir", str(loaded.path.parent))
         self.setWindowTitle(f"{loaded.path.name} — AI Lightroom")
@@ -228,6 +244,86 @@ class MainWindow(QMainWindow):
         self._render_generation += 1
         self._render_timer.start()
 
+    def _create_mask(self, requested_type: str) -> None:
+        if self.preview_source is None:
+            return
+        semantic_label = None
+        if requested_type.startswith("semantic:"):
+            mask_type = MaskType.SEMANTIC
+            semantic_label = requested_type.split(":", 1)[1]
+        else:
+            mask_type = MaskType(requested_type)
+        names = {
+            MaskType.LINEAR_GRADIENT: "线性渐变",
+            MaskType.RADIAL_GRADIENT: "径向渐变",
+            MaskType.LUMINANCE_RANGE: "明度范围",
+            MaskType.COLOR_RANGE: "颜色范围",
+            MaskType.SKY: "天空",
+            MaskType.SUBJECT: "主体",
+            MaskType.SEMANTIC: semantic_label or "语义区域",
+            MaskType.BRUSH: "画笔",
+        }
+        parameters: dict[str, float | str | bool] = {}
+        if mask_type == MaskType.LINEAR_GRADIENT:
+            parameters = {"start_x": 0.5, "start_y": 0.0, "end_x": 0.5, "end_y": 0.65}
+        elif mask_type == MaskType.RADIAL_GRADIENT:
+            parameters = {"center_x": 0.5, "center_y": 0.5, "radius_x": 0.35, "radius_y": 0.35}
+        elif mask_type == MaskType.LUMINANCE_RANGE:
+            parameters = {"min": 0.55, "max": 1.0}
+        elif mask_type == MaskType.COLOR_RANGE:
+            parameters = {"hue": 210.0, "tolerance": 35.0, "min_saturation": 0.08}
+        layer = MaskLayer(
+            name=f"蒙版 {len(self.state.masks) + 1} — {names[mask_type]}",
+            type=mask_type,
+            semantic_label=semantic_label,
+            parameters=parameters,
+        )
+        self.state.masks.append(layer)
+        self.mask_panel.set_state(self.state, layer.id)
+        self._queue_preview_render()
+        self.history.push(self.state, f"创建：{names[mask_type]}")
+        self._refresh_history_ui()
+
+    def _remove_mask(self, mask_id: str) -> None:
+        before = len(self.state.masks)
+        self.state.masks = [layer for layer in self.state.masks if layer.id != mask_id]
+        if len(self.state.masks) == before:
+            return
+        self.mask_panel.set_state(self.state)
+        self._queue_preview_render()
+        self.history.push(self.state, "删除蒙版")
+        self._refresh_history_ui()
+
+    def _set_local_adjustment(self, mask_id: str, key: str, value: float) -> None:
+        layer = self._mask_by_id(mask_id)
+        if layer is None:
+            return
+        layer.adjustments = layer.adjustments.with_value(key, value)
+        self._queue_preview_render()
+        self._schedule_history(f"局部调整：{layer.name}")
+
+    def _set_mask_property(self, mask_id: str, key: str, value) -> None:
+        layer = self._mask_by_id(mask_id)
+        if layer is None or key not in {"enabled", "inverted", "opacity", "feather"}:
+            return
+        setattr(layer, key, value)
+        self._queue_preview_render()
+        self._schedule_history(f"更新蒙版：{layer.name}")
+
+    def _add_brush_stroke(self, points, size: float) -> None:
+        mask_id = self.mask_panel.selected_mask_id
+        layer = self._mask_by_id(mask_id) if mask_id else None
+        if layer is None or layer.type != MaskType.BRUSH:
+            return
+        stroke = BrushStroke(points=[BrushPoint(x=x, y=y) for x, y in points], size=size)
+        layer.strokes.append(stroke)
+        self._queue_preview_render()
+        self.history.push(self.state, f"画笔：{layer.name}")
+        self._refresh_history_ui()
+
+    def _mask_by_id(self, mask_id: str):
+        return next((layer for layer in self.state.masks if layer.id == mask_id), None)
+
     def reset_edits(self) -> None:
         if self.preview_source is None:
             return
@@ -274,6 +370,7 @@ class MainWindow(QMainWindow):
     def _restore_state(self, state: EditorState) -> None:
         self.state = state
         self.adjustments.set_state(state)
+        self.mask_panel.set_state(state)
         self._render_generation += 1
         self._render_timer.stop()
         self._start_preview_render()

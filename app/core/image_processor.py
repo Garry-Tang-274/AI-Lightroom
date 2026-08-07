@@ -3,7 +3,8 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
-from app.core.editor_state import EditorState, HSLColor, ToneCurve
+from app.core.editor_state import EditorState, HSLColor, LocalAdjustments, ToneCurve
+from app.core.masks import generate_mask
 
 
 _HSL_CENTERS = {
@@ -44,7 +45,31 @@ def render_image(source: np.ndarray, state: EditorState) -> np.ndarray:
     image = _local_contrast(image, basic.clarity, basic.texture, basic.dehaze)
     image = _sharpen(image, basic.sharpen)
     image = _vignette(image, basic.vignette)
+    for layer in state.masks:
+        if not layer.enabled or layer.opacity <= 0:
+            continue
+        mask = generate_mask(source, layer)[..., None]
+        if not np.any(mask):
+            continue
+        adjusted = _apply_local_adjustments(image, layer.adjustments)
+        image = image * (1.0 - mask) + adjusted * mask
     return np.clip(np.rint(image * 255.0), 0, 255).astype(np.uint8)
+
+
+def _apply_local_adjustments(image: np.ndarray, local: LocalAdjustments) -> np.ndarray:
+    adjusted = _white_balance(image, local.temperature, local.tint)
+    adjusted = _exposure(adjusted, local.exposure)
+    adjusted = _tone(
+        adjusted,
+        local.contrast,
+        local.highlights,
+        local.shadows,
+        local.whites,
+        local.blacks,
+    )
+    adjusted = _saturation(adjusted, local.saturation, 0)
+    adjusted = _local_contrast(adjusted, local.clarity, 0, local.dehaze)
+    return adjusted
 
 
 def _srgb_to_linear(image: np.ndarray) -> np.ndarray:
@@ -259,4 +284,3 @@ def _vignette(image: np.ndarray, vignette: float) -> np.ndarray:
         factor = 1.0 + amount * 0.65 * edge
         return np.clip(image * factor[..., None], 0.0, 1.0)
     return np.clip(image + (1.0 - image) * (amount * 0.45 * edge[..., None]), 0.0, 1.0)
-
