@@ -15,6 +15,9 @@ class ImageView(QGraphicsView):
         self._scene = QGraphicsScene(self)
         self._pixmap_item = QGraphicsPixmapItem()
         self._scene.addItem(self._pixmap_item)
+        self._mask_overlay_item = QGraphicsPixmapItem()
+        self._mask_overlay_item.setZValue(10)
+        self._scene.addItem(self._mask_overlay_item)
         self.setScene(self._scene)
         self.setBackgroundBrush(Qt.GlobalColor.black)
         self.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform)
@@ -43,7 +46,21 @@ class ImageView(QGraphicsView):
 
     def clear_image(self) -> None:
         self._pixmap_item.setPixmap(QPixmap())
+        self._mask_overlay_item.setPixmap(QPixmap())
         self._has_image = False
+
+    def set_mask_overlay(self, mask: np.ndarray | None) -> None:
+        if mask is None:
+            self._mask_overlay_item.setPixmap(QPixmap())
+            return
+        alpha = np.clip(mask * 120, 0, 120).astype(np.uint8)
+        rgba = np.zeros((mask.shape[0], mask.shape[1], 4), dtype=np.uint8)
+        rgba[..., 0] = 235
+        rgba[..., 1] = 48
+        rgba[..., 2] = 54
+        rgba[..., 3] = alpha
+        image = QImage(np.ascontiguousarray(rgba).data, rgba.shape[1], rgba.shape[0], rgba.strides[0], QImage.Format.Format_RGBA8888).copy()
+        self._mask_overlay_item.setPixmap(QPixmap.fromImage(image))
 
     def fit_to_view(self) -> None:
         if not self._has_image:

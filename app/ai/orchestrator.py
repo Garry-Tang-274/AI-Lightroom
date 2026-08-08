@@ -12,6 +12,8 @@ from app.ai.provider import AIProvider, PlanningRequest
 from app.ai.schemas import EditingPlan
 from app.core.editor_state import EditorState
 from app.core.image_processor import render_image
+from app.core.masks import generate_mask, mask_confidence
+from app.core.editor_state import MaskType
 
 
 _VISIONLESS_PATTERNS = re.compile(
@@ -65,6 +67,7 @@ class AIOrchestrator:
         request = PlanningRequest(instruction, state.snapshot(), preview_jpeg, history_summary)
         plan = self.provider.plan(request)
         execution = apply_editing_plan(state, plan, selected_mask_id)
+        _reject_unreliable_masks(source_preview, state, execution)
         plans = [plan]
         changed = execution.changed_fields.copy()
         created = execution.created_masks.copy()
@@ -85,6 +88,7 @@ class AIOrchestrator:
             )
             second_plan = self.provider.plan(followup)
             second = apply_editing_plan(execution.state, second_plan, selected_mask_id)
+            _reject_unreliable_masks(source_preview, execution.state, second)
             execution = second
             plans.append(second_plan)
             changed.extend(second.changed_fields)
@@ -116,3 +120,23 @@ def encode_preview(pixels: np.ndarray, max_edge: int = 1280, quality: int = 85) 
     image.save(output, format="JPEG", quality=quality, optimize=True, subsampling=2)
     return output.getvalue()
 
+
+def _reject_unreliable_masks(source: np.ndarray, prior_state: EditorState, execution: ExecutionResult) -> None:
+    """AI mask requests use the same local image analysis as the manual UI."""
+    existing_ids = {layer.id for layer in prior_state.masks}
+    rejected: list[str] = []
+    retained = []
+    for layer in execution.state.masks:
+        if layer.id in existing_ids or layer.type not in {MaskType.SKY, MaskType.SUBJECT, MaskType.SEMANTIC}:
+            retained.append(layer)
+            continue
+        confidence = mask_confidence(generate_mask(source, layer), layer.semantic_label or layer.type.value)
+        if confidence <= 0:
+            rejected.append(layer.name)
+            continue
+        layer.parameters["mask_confidence"] = confidence
+        retained.append(layer)
+    if rejected:
+        execution.state.masks = retained
+        execution.created_masks[:] = [name for name in execution.created_masks if name not in rejected]
+        execution.changed_fields.extend([f"未能可靠识别 {name}，未创建蒙版" for name in rejected])

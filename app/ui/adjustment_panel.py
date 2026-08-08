@@ -48,8 +48,17 @@ BASIC_SPECS = (
 )
 
 
+class NoWheelSlider(QSlider):
+    """Keep the editor scroll wheel for the surrounding panel, never values."""
+
+    def wheelEvent(self, event) -> None:  # noqa: N802
+        event.ignore()
+
+
 class ParameterSlider(QWidget):
     value_changed = Signal(str, float)
+    interaction_started = Signal(str)
+    interaction_finished = Signal(str)
 
     def __init__(self, spec: SliderSpec, parent=None) -> None:
         super().__init__(parent)
@@ -58,10 +67,12 @@ class ParameterSlider(QWidget):
         self.value_label = QLabel("0")
         self.value_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.value_label.setMinimumWidth(42)
-        self.slider = QSlider(Qt.Orientation.Horizontal)
+        self.slider = NoWheelSlider(Qt.Orientation.Horizontal)
         self.slider.setRange(spec.minimum, spec.maximum)
         self.slider.setValue(0)
         self.slider.valueChanged.connect(self._emit_value)
+        self.slider.sliderPressed.connect(lambda: self.interaction_started.emit(self.spec.key))
+        self.slider.sliderReleased.connect(lambda: self.interaction_finished.emit(self.spec.key))
 
         top = QHBoxLayout()
         top.setContentsMargins(0, 0, 0, 0)
@@ -95,6 +106,8 @@ class AdjustmentPanel(QScrollArea):
     curve_changed = Signal(str, object)
     color_grading_changed = Signal(str, str, float)
     reset_requested = Signal()
+    interaction_started = Signal(str)
+    interaction_finished = Signal(str)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -120,6 +133,8 @@ class AdjustmentPanel(QScrollArea):
         for spec in BASIC_SPECS:
             control = ParameterSlider(spec)
             control.value_changed.connect(self.adjustment_changed)
+            control.interaction_started.connect(lambda _key, label=spec.label: self.interaction_started.emit(label))
+            control.interaction_finished.connect(lambda _key, label=spec.label: self.interaction_finished.emit(label))
             self.controls[spec.key] = control
             basic_layout.addWidget(control)
         layout.addWidget(basic)
@@ -147,6 +162,8 @@ class AdjustmentPanel(QScrollArea):
         ):
             control = ParameterSlider(spec)
             control.value_changed.connect(self._hsl_value_changed)
+            control.interaction_started.connect(lambda _key: self.interaction_started.emit("调整 HSL"))
+            control.interaction_finished.connect(lambda _key: self.interaction_finished.emit("调整 HSL"))
             self.hsl_controls[spec.key] = control
             hsl_layout.addWidget(control)
         self.hsl_selector.currentIndexChanged.connect(self._show_selected_hsl)
@@ -156,6 +173,8 @@ class AdjustmentPanel(QScrollArea):
         curve_layout = QVBoxLayout(curve_group)
         self.curve_panel = CurvePanel()
         self.curve_panel.curve_changed.connect(self.curve_changed)
+        self.curve_panel.interaction_started.connect(lambda: self.interaction_started.emit("调整曲线"))
+        self.curve_panel.interaction_finished.connect(lambda: self.interaction_finished.emit("调整曲线"))
         curve_layout.addWidget(self.curve_panel)
         layout.addWidget(curve_group)
 
@@ -174,6 +193,8 @@ class AdjustmentPanel(QScrollArea):
         ):
             control = ParameterSlider(spec)
             control.value_changed.connect(self._grading_value_changed)
+            control.interaction_started.connect(lambda _key: self.interaction_started.emit("调整色彩分级"))
+            control.interaction_finished.connect(lambda _key: self.interaction_finished.emit("调整色彩分级"))
             self.grading_controls[spec.key] = control
             grading_layout.addWidget(control)
         self.grading_selector.currentIndexChanged.connect(self._show_selected_grading)

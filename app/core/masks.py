@@ -175,25 +175,30 @@ def _top_connected(binary: np.ndarray) -> np.ndarray:
 
 
 def _subject(source: np.ndarray) -> np.ndarray:
+    """Image-driven foreground saliency; no fixed central ellipse fallback."""
     height, width = source.shape[:2]
-    x, y = _coordinates(height, width)
-    center = np.exp(-(((x - 0.5) / 0.34) ** 2 + ((y - 0.52) / 0.46) ** 2) * 1.5)
     lab = cv2.cvtColor(source, cv2.COLOR_RGB2LAB).astype(np.float32)
-    local = cv2.GaussianBlur(lab, (0, 0), max(4.0, min(height, width) / 30.0))
-    contrast = np.linalg.norm(lab - local, axis=2) / 90.0
-    contrast = cv2.GaussianBlur(np.clip(contrast, 0, 1), (0, 0), max(2.0, min(height, width) / 100.0))
-    return np.clip(center * (0.45 + contrast * 0.8), 0.0, 1.0)
+    local = cv2.GaussianBlur(lab, (0, 0), max(5.0, min(height, width) / 22.0))
+    contrast = np.linalg.norm(lab - local, axis=2)
+    contrast = cv2.GaussianBlur(contrast, (0, 0), max(2.0, min(height, width) / 120.0))
+    minimum, maximum = float(contrast.min()), float(contrast.max())
+    if maximum - minimum < 2.0:
+        return np.zeros((height, width), dtype=np.float32)
+    return np.clip((contrast - np.percentile(contrast, 60)) / max(np.percentile(contrast, 96) - np.percentile(contrast, 60), 1e-4), 0, 1).astype(np.float32)
 
 
 def _semantic(source: np.ndarray, label: str) -> np.ndarray:
     normalized = label.strip().lower()
     hsv = cv2.cvtColor(source.astype(np.float32) / 255.0, cv2.COLOR_RGB2HSV)
     height, width = source.shape[:2]
-    _, y = _coordinates(height, width)
     if normalized == "sky":
         return _sky(source)
-    if normalized in {"subject", "person", "vehicle"}:
+    if normalized in {"subject", "foreground"}:
         return _subject(source)
+    if normalized == "person":
+        return _people(source)
+    if normalized == "vehicle":
+        return _vehicle(source)
     if normalized in {"face", "skin"}:
         hue = hsv[..., 0]
         skin = ((hue < 52) | (hue > 345)).astype(np.float32)
@@ -204,13 +209,148 @@ def _semantic(source: np.ndarray, label: str) -> np.ndarray:
         return (1.0 - _smoothstep(28, 72, hue_distance)) * _smoothstep(0.12, 0.35, hsv[..., 1])
     if normalized == "water":
         hue_distance = np.abs((hsv[..., 0] - 205.0 + 180.0) % 360.0 - 180.0)
-        return (1.0 - _smoothstep(35, 85, hue_distance)) * _smoothstep(0.25, 0.65, y)
-    if normalized in {"ground", "road"}:
-        return _smoothstep(0.38, 0.88, y)
+        blue = 1.0 - _smoothstep(35, 85, hue_distance)
+        luma = source.astype(np.float32).mean(axis=2) / 255.0
+        smooth = 1.0 - _local_texture(luma)
+        return np.clip(blue * smooth * _largest_components(blue * smooth, 0.22), 0, 1)
+    if normalized == "road":
+        return _road(source)
+    if normalized == "ground":
+        return np.maximum(_road(source), _ground(source))
     if normalized in {"building", "architecture"}:
-        neutral = 1.0 - _smoothstep(0.12, 0.65, hsv[..., 1])
-        return neutral * _smoothstep(0.18, 0.58, y)
-    return _subject(source)
+        return _building(source)
+    if normalized == "background":
+        return np.clip(1.0 - _subject(source), 0.0, 1.0)
+    return np.zeros((height, width), dtype=np.float32)
+
+
+def _local_texture(luma: np.ndarray) -> np.ndarray:
+    blur = cv2.GaussianBlur(luma, (0, 0), 3.0)
+    texture = cv2.GaussianBlur(np.abs(luma - blur), (0, 0), 2.0)
+    return np.clip(texture / max(float(np.percentile(texture, 90)), 1e-4), 0, 1)
+
+
+def _largest_components(score: np.ndarray, threshold: float) -> np.ndarray:
+    binary = (score > threshold).astype(np.uint8)
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(binary, connectivity=8)
+    output = np.zeros_like(score, dtype=np.float32)
+    if count <= 1:
+        return output
+    area_floor = score.size * 0.003
+    for component in range(1, count):
+        if stats[component, cv2.CC_STAT_AREA] >= area_floor:
+            output[labels == component] = 1.0
+    return output
+
+
+def _road(source: np.ndarray) -> np.ndarray:
+    """Conservative road candidate: connected smooth neutral surface + line geometry."""
+    rgb = source.astype(np.float32) / 255.0
+    hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)
+    luma = rgb.mean(axis=2)
+    smooth = 1.0 - _local_texture(luma)
+    neutral = 1.0 - _smoothstep(0.16, 0.62, hsv[..., 1])
+    edges = cv2.Canny(source, 55, 145)
+    lines = cv2.HoughLinesP(edges, 1, np.pi / 180, threshold=max(20, source.shape[1] // 12), minLineLength=max(18, source.shape[1] // 10), maxLineGap=18)
+    line_map = np.zeros(source.shape[:2], dtype=np.float32)
+    if lines is None:
+        return line_map
+    converging = 0
+    left_boundaries: list[tuple[float, float]] = []
+    right_boundaries: list[tuple[float, float]] = []
+    for x1, y1, x2, y2 in lines[:, 0]:
+        angle = abs(np.degrees(np.arctan2(y2 - y1, x2 - x1)))
+        if 18 < angle < 162:
+            cv2.line(line_map, (x1, y1), (x2, y2), 1.0, max(2, source.shape[1] // 160), cv2.LINE_AA)
+            converging += 1
+            if abs(y2 - y1) > 2:
+                slope = (x2 - x1) / (y2 - y1)
+                intercept = x1 - slope * y1
+                if slope < -0.04:
+                    left_boundaries.append((slope, intercept))
+                elif slope > 0.04:
+                    right_boundaries.append((slope, intercept))
+    if converging < 2:
+        return np.zeros_like(luma)
+    if left_boundaries and right_boundaries:
+        left = min(left_boundaries, key=lambda item: abs(item[0]))
+        right = min(right_boundaries, key=lambda item: abs(item[0]))
+        y_bottom = source.shape[0] - 1
+        y_top = max(0, int(source.shape[0] * 0.18))
+        left_top, right_top = left[0] * y_top + left[1], right[0] * y_top + right[1]
+        left_bottom, right_bottom = left[0] * y_bottom + left[1], right[0] * y_bottom + right[1]
+        if left_top < right_top and left_bottom < right_bottom:
+            geometry = np.zeros_like(luma)
+            polygon = np.array(
+                [[left_bottom, y_bottom], [right_bottom, y_bottom], [right_top, y_top], [left_top, y_top]],
+                dtype=np.int32,
+            )
+            cv2.fillConvexPoly(geometry, polygon, 1.0)
+            return np.clip(geometry * neutral * (0.45 + 0.55 * smooth), 0, 1)
+    candidate = cv2.GaussianBlur(line_map, (0, 0), max(5.0, min(source.shape[:2]) / 25.0)) * smooth * neutral
+    components = _largest_components(candidate, 0.08)
+    return np.clip(candidate * components * 2.2, 0, 1)
+
+
+def _ground(source: np.ndarray) -> np.ndarray:
+    rgb = source.astype(np.float32) / 255.0
+    luma = rgb.mean(axis=2)
+    texture = _local_texture(luma)
+    edges = cv2.Canny(source, 60, 160).astype(np.float32) / 255.0
+    horizontal = cv2.GaussianBlur(edges, (0, 0), max(3.0, min(source.shape[:2]) / 70.0))
+    score = np.clip((texture * 0.65 + horizontal * 0.35), 0, 1)
+    return score * _largest_components(score, 0.18)
+
+
+def _building(source: np.ndarray) -> np.ndarray:
+    rgb = source.astype(np.float32) / 255.0
+    hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)
+    neutral = 1.0 - _smoothstep(0.13, 0.72, hsv[..., 1])
+    edges = cv2.Canny(source, 55, 155).astype(np.float32) / 255.0
+    vertical = cv2.Sobel(edges, cv2.CV_32F, 1, 0, ksize=3)
+    structural = cv2.GaussianBlur(np.abs(vertical), (0, 0), max(2.0, min(source.shape[:2]) / 110.0))
+    structural /= max(float(np.percentile(structural, 92)), 1e-4)
+    score = np.clip(neutral * structural, 0, 1)
+    return score * _largest_components(score, 0.12)
+
+
+def _people(source: np.ndarray) -> np.ndarray:
+    detector = cv2.HOGDescriptor()
+    detector.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
+    rectangles, weights = detector.detectMultiScale(source, winStride=(8, 8), padding=(8, 8), scale=1.05)
+    mask = np.zeros(source.shape[:2], dtype=np.float32)
+    for (x, y, width, height), weight in zip(rectangles, weights):
+        if float(weight) >= 0.25:
+            cv2.rectangle(mask, (x, y), (x + width, y + height), 1.0, -1)
+    return cv2.GaussianBlur(mask, (0, 0), 2.0) if np.any(mask) else mask
+
+
+def _vehicle(source: np.ndarray) -> np.ndarray:
+    edges = cv2.Canny(source, 70, 180)
+    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    mask = np.zeros(source.shape[:2], dtype=np.float32)
+    image_area = source.shape[0] * source.shape[1]
+    for contour in contours:
+        x, y, width, height = cv2.boundingRect(contour)
+        area = width * height
+        if area < image_area * 0.004 or width < height * 1.25 or width > source.shape[1] * 0.75:
+            continue
+        perimeter = cv2.arcLength(contour, True)
+        if perimeter and cv2.contourArea(contour) / perimeter < 1.5:
+            continue
+        cv2.rectangle(mask, (x, y), (x + width, y + height), 1.0, -1)
+    return cv2.GaussianBlur(mask, (0, 0), 2.0) if np.any(mask) else mask
+
+
+def mask_confidence(mask: np.ndarray, label: str | None = None) -> float:
+    """Return a conservative confidence based on actual mask content, not a location prior."""
+    coverage = float((mask >= 0.35).mean())
+    if coverage < 0.008 or coverage > 0.88:
+        return 0.0
+    contrast = float(mask.std())
+    if contrast < 0.035:
+        return 0.0
+    return min(1.0, (coverage / 0.06) * min(1.0, contrast / 0.18))
 
 
 def _brush(height: int, width: int, strokes: list[BrushStroke]) -> np.ndarray:

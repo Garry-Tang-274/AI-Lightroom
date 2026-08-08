@@ -39,6 +39,10 @@ class MaskPanel(QWidget):
     local_adjustment_changed = Signal(str, str, float)
     mask_property_changed = Signal(str, str, object)
     brush_mode_changed = Signal(bool, float)
+    interaction_started = Signal(str)
+    interaction_finished = Signal(str)
+    mask_selected = Signal(str)
+    mask_preview_toggled = Signal(bool)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -60,6 +64,9 @@ class MaskPanel(QWidget):
             ("建筑", "semantic:building"),
             ("道路", "semantic:road"),
             ("人物", "semantic:person"),
+            ("车辆", "semantic:vehicle"),
+            ("前景", "semantic:foreground"),
+            ("背景", "semantic:background"),
             ("画笔", MaskType.BRUSH.value),
         ):
             self.type_selector.addItem(label, key)
@@ -67,6 +74,9 @@ class MaskPanel(QWidget):
         self.add_button.setObjectName("accentButton")
         self.remove_button = QPushButton("删除")
         self.remove_button.setEnabled(False)
+        self.preview_button = QPushButton("显示 Mask")
+        self.preview_button.setCheckable(True)
+        self.preview_button.setEnabled(False)
         self.list_widget = QListWidget()
         self.empty_label = QLabel("添加局部蒙版后，可单独调整选中区域。")
         self.empty_label.setWordWrap(True)
@@ -77,6 +87,7 @@ class MaskPanel(QWidget):
         add_row.addWidget(self.add_button)
         button_row = QHBoxLayout()
         button_row.addStretch()
+        button_row.addWidget(self.preview_button)
         button_row.addWidget(self.remove_button)
 
         self.properties = QWidget()
@@ -102,8 +113,19 @@ class MaskPanel(QWidget):
         self.brush_size = ParameterSlider(SliderSpec("brush_size", "画笔大小", 1, 40, 100))
         self.brush_size.set_value(0.08)
         self.brush_size.setVisible(False)
+        self.brush_hardness = ParameterSlider(SliderSpec("brush_hardness", "画笔硬度", 0, 100, 100))
+        self.brush_hardness.set_value(0.65)
+        self.brush_hardness.setVisible(False)
+        self.brush_opacity = ParameterSlider(SliderSpec("brush_opacity", "画笔不透明度", 1, 100, 100))
+        self.brush_opacity.set_value(1.0)
+        self.brush_opacity.setVisible(False)
+        self.brush_erase = QCheckBox("擦除笔触")
+        self.brush_erase.setVisible(False)
         properties_layout.addWidget(self.paint_button)
         properties_layout.addWidget(self.brush_size)
+        properties_layout.addWidget(self.brush_hardness)
+        properties_layout.addWidget(self.brush_opacity)
+        properties_layout.addWidget(self.brush_erase)
 
         local_title = QLabel("局部参数")
         local_title.setStyleSheet("font-weight: 600; padding-top: 5px;")
@@ -135,6 +157,10 @@ class MaskPanel(QWidget):
         self.invert_check.toggled.connect(lambda value: self._property_changed("inverted", value))
         self.opacity_control.value_changed.connect(lambda _key, value: self._property_changed("opacity", value))
         self.feather_control.value_changed.connect(lambda _key, value: self._property_changed("feather", value))
+        for control in (self.opacity_control, self.feather_control, *self.controls.values()):
+            control.interaction_started.connect(lambda _key: self.interaction_started.emit("调整局部蒙版"))
+            control.interaction_finished.connect(lambda _key: self.interaction_finished.emit("调整局部蒙版"))
+        self.preview_button.toggled.connect(self.mask_preview_toggled)
         self.paint_button.toggled.connect(self._paint_toggled)
         self.brush_size.value_changed.connect(self._brush_size_changed)
         self.properties.setEnabled(False)
@@ -142,6 +168,18 @@ class MaskPanel(QWidget):
     @property
     def selected_mask_id(self) -> str | None:
         return self._selected_id
+
+    @property
+    def brush_hardness_value(self) -> float:
+        return self.brush_hardness.slider.value() / self.brush_hardness.spec.scale
+
+    @property
+    def brush_opacity_value(self) -> float:
+        return self.brush_opacity.slider.value() / self.brush_opacity.spec.scale
+
+    @property
+    def brush_erase_value(self) -> bool:
+        return self.brush_erase.isChecked()
 
     def set_state(self, state: EditorState, select_id: str | None = None) -> None:
         requested = select_id or self._selected_id
@@ -167,6 +205,7 @@ class MaskPanel(QWidget):
             self._selected_id = None
             self.properties.setEnabled(False)
             self.remove_button.setEnabled(False)
+            self.preview_button.setEnabled(False)
             self.brush_mode_changed.emit(False, self._brush_size_value())
 
     def _selection_changed(self, current: QListWidgetItem | None, previous: QListWidgetItem | None) -> None:
@@ -177,9 +216,11 @@ class MaskPanel(QWidget):
         self.paint_button.blockSignals(False)
         self.brush_mode_changed.emit(False, self._brush_size_value())
         self._selected_id = current.data(Qt.ItemDataRole.UserRole) if current else None
+        self.mask_selected.emit(self._selected_id or "")
         layer = self._selected_layer()
         self.properties.setEnabled(layer is not None)
         self.remove_button.setEnabled(layer is not None)
+        self.preview_button.setEnabled(layer is not None)
         if layer is None:
             return
         self._updating = True
@@ -192,6 +233,9 @@ class MaskPanel(QWidget):
         is_brush = layer.type == MaskType.BRUSH
         self.paint_button.setVisible(is_brush)
         self.brush_size.setVisible(is_brush)
+        self.brush_hardness.setVisible(is_brush)
+        self.brush_opacity.setVisible(is_brush)
+        self.brush_erase.setVisible(is_brush)
         self._updating = False
 
     def _selected_layer(self):
@@ -219,4 +263,3 @@ class MaskPanel(QWidget):
 
     def _brush_size_value(self) -> float:
         return self.brush_size.slider.value() / self.brush_size.spec.scale
-

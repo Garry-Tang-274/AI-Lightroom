@@ -24,6 +24,8 @@ CHANNEL_COLORS = {
 
 class CurveEditor(QWidget):
     curve_changed = Signal(object)
+    interaction_started = Signal()
+    interaction_finished = Signal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -83,6 +85,7 @@ class CurveEditor(QWidget):
             return
         if event.button() != Qt.MouseButton.LeftButton:
             return
+        self.interaction_started.emit()
         if distance < 14:
             self._drag_index = nearest
         else:
@@ -109,6 +112,7 @@ class CurveEditor(QWidget):
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - Qt API
         self._drag_index = None
+        self.interaction_finished.emit()
 
     def _plot_rect(self) -> QRectF:
         return QRectF(8, 8, max(1, self.width() - 16), max(1, self.height() - 16))
@@ -136,6 +140,8 @@ class CurveEditor(QWidget):
 
 class CurvePanel(QWidget):
     curve_changed = Signal(str, object)
+    interaction_started = Signal()
+    interaction_finished = Signal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -158,6 +164,8 @@ class CurvePanel(QWidget):
         self.channel.currentIndexChanged.connect(self._channel_selected)
         self.reset_button.clicked.connect(self._reset)
         self.editor.curve_changed.connect(self._curve_edited)
+        self.editor.interaction_started.connect(self.interaction_started)
+        self.editor.interaction_finished.connect(self.interaction_finished)
 
     def set_state(self, state: EditorState) -> None:
         self._state = state.snapshot()
@@ -180,4 +188,3 @@ class CurvePanel(QWidget):
         curve = ToneCurve()
         self.editor.set_curve(curve)
         self._curve_edited(curve)
-

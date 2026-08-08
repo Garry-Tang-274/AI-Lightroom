@@ -48,6 +48,7 @@ from app.ai.errors import AIRequestError
 from app.ai.usage import AIUsageManager
 from app.core.watermarks import WatermarkLibrary
 from app.core.session_store import SessionStore
+from app.core.masks import generate_mask, mask_confidence
 
 
 class MainWindow(QMainWindow):
@@ -72,13 +73,17 @@ class MainWindow(QMainWindow):
         self._render_pool.setMaxThreadCount(self.runtime_settings.worker_threads)
         self._render_timer = QTimer(self)
         self._render_timer.setSingleShot(True)
-        self._render_timer.setInterval(75)
+        self._render_timer.setInterval(16)
         self._render_timer.timeout.connect(self._start_preview_render)
         self._history_timer = QTimer(self)
         self._history_timer.setSingleShot(True)
         self._history_timer.setInterval(350)
         self._history_timer.timeout.connect(self._flush_history)
         self._pending_history_label = "调整参数"
+        self._active_interaction = False
+        self._interaction_label = "调整参数"
+        self._render_in_flight = False
+        self._render_dirty = False
         self._export_worker = None
         self._ai_worker = None
         self._ai_details = ""
@@ -192,6 +197,8 @@ class MainWindow(QMainWindow):
         self.adjustments.curve_changed.connect(self._set_curve)
         self.adjustments.color_grading_changed.connect(self._set_color_grading)
         self.adjustments.reset_requested.connect(self.reset_edits)
+        self.adjustments.interaction_started.connect(self._begin_interaction)
+        self.adjustments.interaction_finished.connect(self._finish_interaction)
 
         left_tabs = QTabWidget()
         history = QListWidget()
@@ -210,6 +217,10 @@ class MainWindow(QMainWindow):
         self.mask_panel.local_adjustment_changed.connect(self._set_local_adjustment)
         self.mask_panel.mask_property_changed.connect(self._set_mask_property)
         self.mask_panel.brush_mode_changed.connect(self.image_view.set_brush_mode)
+        self.mask_panel.mask_selected.connect(lambda _mask_id: self._update_mask_overlay())
+        self.mask_panel.mask_preview_toggled.connect(lambda _visible: self._update_mask_overlay())
+        self.mask_panel.interaction_started.connect(self._begin_interaction)
+        self.mask_panel.interaction_finished.connect(self._finish_interaction)
         self.image_view.brush_stroke_finished.connect(self._add_brush_stroke)
         self.watermark_panel.import_requested.connect(self._import_watermark)
         self.watermark_panel.remove_requested.connect(self._remove_watermark)
@@ -339,6 +350,20 @@ class MainWindow(QMainWindow):
         self._render_generation += 1
         self._render_timer.start()
 
+    def _begin_interaction(self, label: str) -> None:
+        if self.preview_source is None or self._active_interaction:
+            return
+        self._flush_history()
+        self._active_interaction = True
+        self._interaction_label = label
+
+    def _finish_interaction(self, label: str) -> None:
+        if not self._active_interaction:
+            return
+        self._active_interaction = False
+        self._pending_history_label = label or self._interaction_label
+        self._flush_history()
+
     def _create_mask(self, requested_type: str) -> None:
         if self.preview_source is None:
             return
@@ -373,8 +398,15 @@ class MainWindow(QMainWindow):
             semantic_label=semantic_label,
             parameters=parameters,
         )
+        if mask_type in {MaskType.SKY, MaskType.SUBJECT, MaskType.SEMANTIC}:
+            confidence = mask_confidence(generate_mask(self.preview_source, layer), semantic_label or mask_type.value)
+            if confidence <= 0:
+                self.statusBar().showMessage(f"未能可靠识别{names[mask_type]}区域，请手动选择或使用画笔。", 8000)
+                return
+            layer.parameters["mask_confidence"] = confidence
         self.state.masks.append(layer)
         self.mask_panel.set_state(self.state, layer.id)
+        self._update_mask_overlay()
         self._queue_preview_render()
         self.history.push(self.state, f"创建：{names[mask_type]}")
         self._refresh_history_ui()
@@ -385,6 +417,7 @@ class MainWindow(QMainWindow):
         if len(self.state.masks) == before:
             return
         self.mask_panel.set_state(self.state)
+        self._update_mask_overlay()
         self._queue_preview_render()
         self.history.push(self.state, "删除蒙版")
         self._refresh_history_ui()
@@ -395,6 +428,7 @@ class MainWindow(QMainWindow):
             return
         layer.adjustments = layer.adjustments.with_value(key, value)
         self._queue_preview_render()
+        self._update_mask_overlay()
         self._schedule_history(f"局部调整：{layer.name}")
 
     def _set_mask_property(self, mask_id: str, key: str, value) -> None:
@@ -403,6 +437,7 @@ class MainWindow(QMainWindow):
             return
         setattr(layer, key, value)
         self._queue_preview_render()
+        self._update_mask_overlay()
         self._schedule_history(f"更新蒙版：{layer.name}")
 
     def _add_brush_stroke(self, points, size: float) -> None:
@@ -410,7 +445,12 @@ class MainWindow(QMainWindow):
         layer = self._mask_by_id(mask_id) if mask_id else None
         if layer is None or layer.type != MaskType.BRUSH:
             return
-        stroke = BrushStroke(points=[BrushPoint(x=x, y=y) for x, y in points], size=size)
+        stroke = BrushStroke(
+            points=[BrushPoint(x=x, y=y) for x, y in points], size=size,
+            hardness=self.mask_panel.brush_hardness_value,
+            opacity=self.mask_panel.brush_opacity_value,
+            erase=self.mask_panel.brush_erase_value,
+        )
         layer.strokes.append(stroke)
         self._queue_preview_render()
         self.history.push(self.state, f"画笔：{layer.name}")
@@ -495,6 +535,19 @@ class MainWindow(QMainWindow):
     def _mask_by_id(self, mask_id: str):
         return next((layer for layer in self.state.masks if layer.id == mask_id), None)
 
+    def _update_mask_overlay(self) -> None:
+        if self.preview_source is None or not self.mask_panel.preview_button.isChecked():
+            self.image_view.set_mask_overlay(None)
+            return
+        layer = self._mask_by_id(self.mask_panel.selected_mask_id or "")
+        if layer is None:
+            self.image_view.set_mask_overlay(None)
+            return
+        try:
+            self.image_view.set_mask_overlay(generate_mask(self.preview_source, layer))
+        except ValueError:
+            self.image_view.set_mask_overlay(None)
+
     def reset_edits(self) -> None:
         if self.preview_source is None:
             return
@@ -512,6 +565,8 @@ class MainWindow(QMainWindow):
         self._refresh_history_ui()
 
     def _schedule_history(self, label: str) -> None:
+        if self._active_interaction:
+            return
         self._pending_history_label = label
         self._history_timer.start()
 
@@ -619,24 +674,40 @@ class MainWindow(QMainWindow):
     def _start_preview_render(self) -> None:
         if self.preview_source is None:
             return
+        if self._render_in_flight:
+            self._render_dirty = True
+            return
         generation = self._render_generation
         worker = PreviewRenderWorker(self.preview_source, self.state, generation)
         worker.signals.finished.connect(self._preview_rendered)
         worker.signals.failed.connect(self._preview_failed)
+        self._render_in_flight = True
         self._render_pool.start(worker)
 
     def _preview_rendered(self, pixels, generation: int) -> None:
+        self._render_in_flight = False
         if generation != self._render_generation:
+            self._render_dirty = False
+            self._render_timer.start()
             return
         self.image_view.set_image(pixels)
         self.current_preview = pixels
         self.histogram.set_image(pixels)
+        if self._render_dirty:
+            self._render_dirty = False
+            self._render_timer.start()
         self.statusBar().showMessage(f"{self.loaded_image.description}  •  已编辑")
 
     def _preview_failed(self, details: str, generation: int) -> None:
+        self._render_in_flight = False
         if generation != self._render_generation:
+            self._render_dirty = False
+            self._render_timer.start()
             return
         self.statusBar().showMessage("预览渲染失败；已保留当前参数")
+        if self._render_dirty:
+            self._render_dirty = False
+            self._render_timer.start()
 
     def _show_before(self) -> None:
         if self.preview_source is not None:
