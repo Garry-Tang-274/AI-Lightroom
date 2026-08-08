@@ -841,9 +841,12 @@ class MainWindow(QMainWindow):
         self._ai_details = error.details()
         self.ai_panel.set_details_available(True)
         self.ai_panel.set_retry_available(bool(self._last_ai_prompt))
-        self.ai_panel.add_assistant_message(
+        visible_error = (
             f"AI 请求失败\n类型：{error.category}\n模型：{error.model or self.runtime_settings.active_model}\n说明：{error.message}\n照片未发生任何修改。"
         )
+        if error.validation_errors:
+            visible_error += f"\n字段：{error.validation_summary()}"
+        self.ai_panel.add_assistant_message(visible_error)
         self.statusBar().showMessage(f"AI 请求失败：{error.category}；当前编辑未改变", 10000)
         self._refresh_ai_status()
 

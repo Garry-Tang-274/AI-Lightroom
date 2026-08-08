@@ -51,6 +51,18 @@ class AIRequestError(Exception):
         lines.append("照片未发生任何修改。")
         return "\n".join(lines)
 
+    def validation_summary(self, limit: int = 3) -> str:
+        """A short, safe explanation suitable for the compact AI transcript."""
+        if not self.validation_errors:
+            return ""
+        summary: list[str] = []
+        for item in self.validation_errors[:limit]:
+            location = ".".join(str(part) for part in item.get("loc", ())) or "response"
+            message = str(item.get("msg", "invalid value"))
+            summary.append(f"{location}: {message}")
+        suffix = "；…" if len(self.validation_errors) > limit else ""
+        return "；".join(summary) + suffix
+
 
 def error_from_exception(exc: Exception, *, model: str, request_sent: bool, provider: str = "Gemini") -> AIRequestError:
     if isinstance(exc, AIRequestError):

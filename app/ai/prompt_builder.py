@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 from app.ai.provider import PlanningRequest
-from app.ai.schemas import AVAILABLE_TOOLS
+from app.ai.schemas import AVAILABLE_TOOLS, editing_plan_json_contract
 from app.ai.style_strategies import STYLE_STRATEGIES
 from app.ai.system_prompt import DEFAULT_SYSTEM_PROMPT
 
@@ -29,4 +29,10 @@ def build_prompt(request: PlanningRequest, system_prompt: str = DEFAULT_SYSTEM_P
         "style_strategies": STYLE_STRATEGIES,
         "preview_attached": request.preview_jpeg is not None,
     }
-    return system_prompt.strip() + "\n\n当前任务上下文：\n" + json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    return (
+        system_prompt.strip()
+        + "\n\n"
+        + editing_plan_json_contract()
+        + "\n当前任务上下文：\n"
+        + json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    )

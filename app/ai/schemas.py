@@ -138,6 +138,52 @@ AVAILABLE_TOOLS = {
 }
 
 
+def editing_plan_json_contract() -> str:
+    """Compact, provider-neutral JSON contract for JSON-mode providers.
+
+    Gemini and OpenAI receive a wire-level schema.  OpenAI-compatible JSON
+    mode only guarantees syntactically valid JSON, so it must also receive the
+    exact field contract in the prompt.  Keep this concise: it is sent with
+    every visual request and must be easy for a model to follow.
+    """
+    return """\
+OUTPUT CONTRACT (mandatory): Return exactly one JSON object and no Markdown.
+Use exactly these nine snake_case top-level keys, including empty lists:
+{
+  \"summary\": \"short user-facing result\",
+  \"reasoning_summary\": \"one or two short visible reasons\",
+  \"global_adjustments\": [],
+  \"hsl_adjustments\": [],
+  \"curve_adjustments\": [],
+  \"local_adjustments\": [],
+  \"requested_masks\": [],
+  \"confidence\": 0.0,
+  \"needs_reinspection\": false
+}
+Never output keys named analysis, global, hsl, toneCurve, localAdjustments,
+requestedMasks, tools, plan, or any other extra key.
+
+global_adjustments item: {\"tool\": \"set_exposure\", \"value\": 0.0}.
+Only use a global tool listed in available_tools.global. Values are target
+absolute values; exposure is -5..5, sharpen is 0..100, all other global
+values are -100..100.
+hsl_adjustments item: {\"tool\": \"adjust_hsl\", \"color\": \"blue\",
+\"hue\": 0.0, \"saturation\": 0.0, \"luminance\": 0.0}. Color is one of
+red, orange, yellow, green, aqua, blue, purple, magenta; HSL values are -100..100.
+curve_adjustments item: {\"tool\": \"set_rgb_curve\", \"points\":
+[{\"x\": 0.0, \"y\": 0.0}, {\"x\": 1.0, \"y\": 1.0}]}. Use only listed
+curve tools; x/y are 0..1 and at least two points are required.
+requested_masks item: {\"tool\": \"create_sky_mask\", \"ref\": \"sky_1\",
+\"name\": \"Sky\", \"semantic_label\": \"sky\", \"parameters\": {},
+\"feather\": 0.5, \"inverted\": false}. Use only listed mask tools.
+local_adjustments item: {\"mask_ref\": \"sky_1\", \"adjustments\":
+{\"exposure\": -0.3}}. mask_ref must match a requested mask ref or an existing
+mask id/name. Local keys may only be exposure, contrast, highlights, shadows,
+whites, blacks, temperature, tint, saturation, clarity, dehaze. Do not output
+null, omitted required fields, comments, or unsupported adjustment names.
+"""
+
+
 def gemini_response_schema() -> dict:
     """Return a Gemini-compatible copy while keeping local Pydantic validation strict.
 

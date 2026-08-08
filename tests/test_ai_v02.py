@@ -41,6 +41,17 @@ def test_editing_plan_strict_fixture_cases():
         EditingPlan.model_validate(wrong)
 
 
+def test_schema_error_has_a_compact_field_summary():
+    with pytest.raises(ValidationError) as raised:
+        EditingPlan.model_validate(valid_plan() | {"analysis": {"scene": "city"}})
+    error = AIRequestError(
+        "Pydantic schema 校验错误",
+        "response did not match",
+        validation_errors=raised.value.errors(include_url=False),
+    )
+    assert "analysis: Extra inputs are not permitted" in error.validation_summary()
+
+
 def test_gemini_schema_preflight_is_sdk_compatible():
     GeminiProvider.validate_response_schema()
     assert "additionalProperties" not in str(gemini_response_schema())

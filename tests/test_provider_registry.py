@@ -69,6 +69,9 @@ def test_qwen_vision_json_plan_drives_existing_renderer_without_network():
     assert completions.kwargs["extra_body"] == {"enable_thinking": False}
     user_content = completions.kwargs["messages"][1]["content"]
     assert any(item["type"] == "image_url" and item["image_url"]["url"].startswith("data:image/jpeg;base64,") for item in user_content)
+    prompt = next(item["text"] for item in user_content if item["type"] == "text")
+    assert '"global_adjustments"' in prompt
+    assert "Never output keys named analysis" in prompt
 
 
 def test_qwen_error_json_and_invalid_key_are_reported_without_retry():
