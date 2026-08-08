@@ -201,6 +201,9 @@ class MainWindow(QMainWindow):
         except Exception as exc:  # user-facing boundary
             QMessageBox.critical(self, "无法打开图片", str(exc))
             return
+        self._render_generation += 1
+        self._render_timer.stop()
+        self._history_timer.stop()
         self.loaded_image = loaded
         self.state = EditorState()
         self.history.reset(self.state, f"打开：{loaded.path.name}")

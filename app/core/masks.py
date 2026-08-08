@@ -2,8 +2,17 @@ from __future__ import annotations
 
 import cv2
 import numpy as np
+import threading
+import weakref
+from collections import OrderedDict
 
 from app.core.editor_state import BrushStroke, MaskLayer, MaskType
+
+
+_CACHE_LOCK = threading.Lock()
+_SEMANTIC_CACHE: OrderedDict[tuple, tuple[weakref.ReferenceType, np.ndarray]] = OrderedDict()
+_CACHE_MAX_BYTES = 96 * 1024 * 1024
+_cache_bytes = 0
 
 
 def generate_mask(source: np.ndarray, layer: MaskLayer) -> np.ndarray:
@@ -11,6 +20,21 @@ def generate_mask(source: np.ndarray, layer: MaskLayer) -> np.ndarray:
     if source.dtype != np.uint8 or source.ndim != 3 or source.shape[2] != 3:
         raise ValueError("source must be RGB uint8")
     height, width = source.shape[:2]
+    cache_key = None
+    if layer.type in {MaskType.SKY, MaskType.SUBJECT, MaskType.SEMANTIC}:
+        cache_key = (
+            int(source.__array_interface__["data"][0]),
+            source.shape,
+            source.strides,
+            layer.type.value,
+            layer.semantic_label,
+        )
+        cached = _cache_get(cache_key, source)
+        if cached is not None:
+            mask = cached
+            if layer.inverted:
+                mask = 1.0 - mask
+            return np.clip(mask * layer.opacity, 0.0, 1.0).astype(np.float32)
     if layer.type == MaskType.LINEAR_GRADIENT:
         mask = _linear(height, width, layer.parameters)
     elif layer.type == MaskType.RADIAL_GRADIENT:
@@ -29,9 +53,40 @@ def generate_mask(source: np.ndarray, layer: MaskLayer) -> np.ndarray:
         mask = _brush(height, width, layer.strokes)
     else:  # pragma: no cover - enum protects this branch
         raise ValueError(f"Unsupported mask type: {layer.type}")
+    if cache_key is not None:
+        _cache_put(cache_key, source, mask)
     if layer.inverted:
         mask = 1.0 - mask
     return np.clip(mask * layer.opacity, 0.0, 1.0).astype(np.float32)
+
+
+def _cache_get(key: tuple, source: np.ndarray) -> np.ndarray | None:
+    global _cache_bytes
+    with _CACHE_LOCK:
+        entry = _SEMANTIC_CACHE.get(key)
+        if entry is None:
+            return None
+        reference, packed = entry
+        if reference() is not source:
+            _cache_bytes -= packed.nbytes
+            del _SEMANTIC_CACHE[key]
+            return None
+        _SEMANTIC_CACHE.move_to_end(key)
+        return packed.astype(np.float32) / 255.0
+
+
+def _cache_put(key: tuple, source: np.ndarray, mask: np.ndarray) -> None:
+    global _cache_bytes
+    packed = np.clip(np.rint(mask * 255.0), 0, 255).astype(np.uint8)
+    with _CACHE_LOCK:
+        previous = _SEMANTIC_CACHE.pop(key, None)
+        if previous is not None:
+            _cache_bytes -= previous[1].nbytes
+        _SEMANTIC_CACHE[key] = (weakref.ref(source), packed)
+        _cache_bytes += packed.nbytes
+        while _cache_bytes > _CACHE_MAX_BYTES and _SEMANTIC_CACHE:
+            _, (_, removed) = _SEMANTIC_CACHE.popitem(last=False)
+            _cache_bytes -= removed.nbytes
 
 
 def _coordinates(height: int, width: int) -> tuple[np.ndarray, np.ndarray]:

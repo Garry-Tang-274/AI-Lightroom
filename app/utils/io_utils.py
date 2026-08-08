@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from io import BytesIO
 from pathlib import Path
 
 import numpy as np
@@ -66,7 +67,7 @@ def _to_srgb(image: Image.Image) -> Image.Image:
     try:
         profile = image.info.get("icc_profile")
         if profile:
-            source_profile = ImageCms.ImageCmsProfile(profile)
+            source_profile = ImageCms.ImageCmsProfile(BytesIO(profile))
             target_profile = ImageCms.createProfile("sRGB")
             return ImageCms.profileToProfile(image, source_profile, target_profile, outputMode="RGB")
     except (ImageCms.PyCMSError, OSError, TypeError):
