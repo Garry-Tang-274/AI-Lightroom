@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+import logging
+
 from app.ai.capabilities import ProviderCapabilities
 from app.ai.errors import AIRequestError
 from app.ai.openai_compatible_provider import OpenAICompatibleProvider
@@ -10,6 +13,9 @@ QWEN_DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 # Qwen visual structured output is a heavier request than a small text
 # connection probe.  Give it a realistic local deadline without ever retrying.
 QWEN_VISION_TIMEOUT_SECONDS = 120.0
+_SEMANTIC_MASK_HINTS = frozenset({"sample_point_x", "sample_point_y", "range"})
+_SEMANTIC_MASK_TOOLS = frozenset({"create_sky_mask", "create_subject_mask", "create_semantic_mask"})
+logger = logging.getLogger(__name__)
 
 
 class QwenProvider(OpenAICompatibleProvider):
@@ -79,7 +85,39 @@ class QwenProvider(OpenAICompatibleProvider):
                 model=self.model,
                 request_sent=True,
             )
-        return str(getattr(function, "arguments", "") or "")
+        return self._normalise_semantic_mask_hints(str(getattr(function, "arguments", "") or ""))
+
+    @staticmethod
+    def _normalise_semantic_mask_hints(arguments: str) -> str:
+        """Remove only Qwen's known no-op semantic sampling hints.
+
+        The local semantic engine uses the semantic label and pixels; it has no
+        point/range sampler. This is deliberately not a generic extra-field
+        filter: unknown fields or mathematical-mask parameters stay strict.
+        """
+        try:
+            payload = json.loads(arguments)
+        except json.JSONDecodeError:
+            return arguments
+        requests = payload.get("requested_masks") if isinstance(payload, dict) else None
+        if not isinstance(requests, list):
+            return arguments
+        normalised: list[int] = []
+        for index, request in enumerate(requests):
+            if not isinstance(request, dict) or request.get("tool") not in _SEMANTIC_MASK_TOOLS:
+                continue
+            parameters = request.get("parameters")
+            if isinstance(parameters, dict) and parameters and set(parameters).issubset(_SEMANTIC_MASK_HINTS):
+                request["parameters"] = {}
+                normalised.append(index)
+        if normalised:
+            logger.info(
+                "Normalised Qwen no-op semantic mask hints: mask_indexes=%s hints=%s",
+                normalised,
+                sorted(_SEMANTIC_MASK_HINTS),
+            )
+            return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+        return arguments
 
     @staticmethod
     def _editing_plan_tool() -> dict[str, object]:
@@ -87,7 +125,11 @@ class QwenProvider(OpenAICompatibleProvider):
             "type": "function",
             "function": {
                 "name": "submit_editing_plan",
-                "description": "Submit one complete AI Lightroom EditingPlan. This is the only allowed action.",
+                "description": (
+                    "Submit one complete AI Lightroom EditingPlan. This is the only allowed action. "
+                    "For create_sky_mask, create_subject_mask, and create_semantic_mask, "
+                    "parameters must be {} and semantic_label selects the image-derived region."
+                ),
                 "parameters": EditingPlan.model_json_schema(),
             },
         }

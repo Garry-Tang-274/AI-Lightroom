@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import numpy as np
@@ -168,3 +169,25 @@ def test_qwen_uses_a_longer_visual_deadline_without_enabling_retries(monkeypatch
 
     assert captured["timeout"] == QWEN_VISION_TIMEOUT_SECONDS
     assert captured["max_retries"] == 0
+
+
+def test_qwen_normalises_only_known_noop_semantic_mask_hints():
+    payload = _plan().model_dump(mode="json")
+    payload["requested_masks"][0]["parameters"] = {
+        "sample_point_x": 0.5,
+        "sample_point_y": 0.3,
+        "range": 0.2,
+    }
+    arguments = QwenProvider._normalise_semantic_mask_hints(json.dumps(payload))
+    parsed = EditingPlan.model_validate_json(arguments)
+    assert parsed.requested_masks[0].parameters.model_dump(exclude_none=True) == {}
+
+
+def test_qwen_keeps_unknown_or_mathematical_mask_parameters_strict():
+    payload = _plan().model_dump(mode="json")
+    payload["requested_masks"][0]["parameters"] = {"sample_point_x": 0.5, "unexpected": 1}
+    assert QwenProvider._normalise_semantic_mask_hints(json.dumps(payload)) == json.dumps(payload)
+
+    payload["requested_masks"][0]["tool"] = "create_linear_gradient"
+    payload["requested_masks"][0]["parameters"] = {"sample_point_x": 0.5}
+    assert QwenProvider._normalise_semantic_mask_hints(json.dumps(payload)) == json.dumps(payload)

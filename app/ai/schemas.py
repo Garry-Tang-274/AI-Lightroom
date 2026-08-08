@@ -176,6 +176,11 @@ curve tools; x/y are 0..1 and at least two points are required.
 requested_masks item: {\"tool\": \"create_sky_mask\", \"ref\": \"sky_1\",
 \"name\": \"Sky\", \"semantic_label\": \"sky\", \"parameters\": {},
 \"feather\": 0.5, \"inverted\": false}. Use only listed mask tools.
+For create_sky_mask, create_subject_mask, and create_semantic_mask, parameters
+MUST be exactly {}: their regions are generated from the image and semantic_label.
+Never emit sample_point_x, sample_point_y, range, sample points, polygons, or
+any other parameters for these semantic mask tools. Only mathematical mask tools
+may use their documented parameters.
 local_adjustments item: {\"mask_ref\": \"sky_1\", \"adjustments\":
 {\"exposure\": -0.3}}. mask_ref must match a requested mask ref or an existing
 mask id/name. Local keys may only be exposure, contrast, highlights, shadows,
