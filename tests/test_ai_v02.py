@@ -11,7 +11,8 @@ from app.ai.gemini_provider import GeminiProvider
 from app.ai.provider import PlanningRequest
 from app.ai.schemas import EditingPlan, gemini_response_schema
 from app.ai.usage import AIUsageManager
-from app.core.editor_state import EditorState
+from app.core.editor_state import EditorState, LocalAdjustments
+from app.ai.schemas import LocalAdjustmentValues
 from app.ui.ai_panel import AIPanel
 
 
@@ -50,6 +51,10 @@ def test_schema_error_has_a_compact_field_summary():
         validation_errors=raised.value.errors(include_url=False),
     )
     assert "analysis: Extra inputs are not permitted" in error.validation_summary()
+
+
+def test_local_state_and_ai_schema_expose_the_same_supported_fields():
+    assert set(LocalAdjustments.model_fields) == set(LocalAdjustmentValues.model_fields)
 
 
 def test_gemini_schema_preflight_is_sdk_compatible():

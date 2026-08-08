@@ -13,6 +13,14 @@ from app.utils.logging_setup import configure_logging, install_exception_hook
 from app.utils.paths import resource_path
 
 
+def package_self_check() -> int:
+    """Cheap executable-level contract check used by the release build."""
+    from app.ai.schemas import LocalAdjustmentValues
+    from app.core.editor_state import LocalAdjustments
+
+    return 0 if set(LocalAdjustments.model_fields) == set(LocalAdjustmentValues.model_fields) else 2
+
+
 def create_application(argv: list[str] | None = None) -> QApplication:
     QApplication.setOrganizationName("AI Lightroom")
     QApplication.setApplicationName("AI Lightroom")
@@ -30,6 +38,8 @@ def create_application(argv: list[str] | None = None) -> QApplication:
 
 
 def main() -> int:
+    if "--package-self-check" in sys.argv:
+        return package_self_check()
     log_path = configure_logging()
     app = create_application()
     install_exception_hook(log_path)

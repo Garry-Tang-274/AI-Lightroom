@@ -115,9 +115,11 @@ class LocalAdjustments(BaseModel):
     temperature: float = Field(0.0, ge=-100.0, le=100.0)
     tint: float = Field(0.0, ge=-100.0, le=100.0)
     saturation: float = Field(0.0, ge=-100.0, le=100.0)
+    vibrance: float = Field(0.0, ge=-100.0, le=100.0)
     clarity: float = Field(0.0, ge=-100.0, le=100.0)
     texture: float = Field(0.0, ge=-100.0, le=100.0)
     dehaze: float = Field(0.0, ge=-100.0, le=100.0)
+    sharpen: float = Field(0.0, ge=0.0, le=100.0)
 
     def with_value(self, key: str, value: float) -> "LocalAdjustments":
         if key not in type(self).model_fields:

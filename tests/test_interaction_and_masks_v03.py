@@ -98,4 +98,4 @@ def test_mask_overlay_and_ai_requested_mask_use_real_generator(qtbot, tmp_path):
 def test_mask_panel_exposes_local_texture(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)
-    assert "texture" in window.mask_panel.controls
+    assert {"texture", "vibrance", "sharpen"} <= set(window.mask_panel.controls)
