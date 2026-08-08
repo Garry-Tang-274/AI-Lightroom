@@ -69,6 +69,22 @@ def test_native_fixture_rejects_unknown_fields_instead_of_guessing():
         JarvisArtNativePlan.model_validate(payload)
 
 
+def test_invalid_mock_native_output_has_a_specific_local_error_category():
+    class BrokenRuntime:
+        @property
+        def status(self):
+            return type("Status", (), {"state": "Mock Native Ready"})()
+
+        def infer(self, preview_jpeg, instruction, state):
+            return JarvisArtNativePlan.model_validate({"bad": True})
+
+    provider = JarvisArtProvider(provider_registry.make_config("jarvisart_local"), runtime=BrokenRuntime())
+    with pytest.raises(AIRequestError) as raised:
+        provider.plan(PlanningRequest("test", EditorState(), None, []))
+    assert raised.value.category == "JarvisArt fixture parse failed"
+    assert not raised.value.request_sent
+
+
 def test_mock_runtime_drives_adapter_renderer_without_network_or_budget_callbacks():
     started: list[bool] = []
     config = provider_registry.make_config("jarvisart_local", local_mode="mock")
