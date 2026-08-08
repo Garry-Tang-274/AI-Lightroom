@@ -40,30 +40,50 @@ class SettingsDialog(QDialog):
         tab = QWidget()
         form = QFormLayout(tab)
         self.provider = QComboBox()
-        self.provider.addItem("自动（有 Key 使用 Gemini，否则离线 Mock）", "auto")
         self.provider.addItem("Gemini", "gemini")
+        self.provider.addItem("OpenAI（高质量 AI 模式）", "openai")
         self.provider.addItem("离线 Mock", "mock")
         self.provider.setCurrentIndex(max(0, self.provider.findData(runtime.provider)))
-        self.api_key = QLineEdit(self.manager.gemini_api_key())
-        self.api_key.setEchoMode(QLineEdit.EchoMode.Password)
-        self.api_key.setPlaceholderText("未配置时使用离线 Mock")
+        self.gemini_api_key = QLineEdit(self.manager.gemini_api_key())
+        self.gemini_api_key.setEchoMode(QLineEdit.EchoMode.Password)
+        self.gemini_api_key.setPlaceholderText("未配置时 Gemini 将回退到离线 Mock")
         if os.getenv("GEMINI_API_KEY"):
-            self.api_key.setEnabled(False)
-            self.api_key.setToolTip("当前由 GEMINI_API_KEY 环境变量提供")
-        self.model = QLineEdit(runtime.gemini_model)
-        self.current_model = QLabel(runtime.gemini_model)
+            self.gemini_api_key.setEnabled(False)
+            self.gemini_api_key.setToolTip("当前由 GEMINI_API_KEY 环境变量提供")
+        self.openai_api_key = QLineEdit(self.manager.openai_api_key())
+        self.openai_api_key.setEchoMode(QLineEdit.EchoMode.Password)
+        self.openai_api_key.setPlaceholderText("仅在选择 OpenAI 高质量 AI 模式时使用")
+        if os.getenv("OPENAI_API_KEY"):
+            self.openai_api_key.setEnabled(False)
+            self.openai_api_key.setToolTip("当前由 OPENAI_API_KEY 环境变量提供")
+        self.gemini_model = QLineEdit(runtime.gemini_model)
+        self.openai_model = QLineEdit(runtime.openai_model)
+        self.current_model = QLabel(runtime.active_model)
+        self.provider.currentIndexChanged.connect(self._refresh_current_model)
+        self.gemini_model.textChanged.connect(self._refresh_current_model)
+        self.openai_model.textChanged.connect(self._refresh_current_model)
         self.reinspection = QCheckBox("AI 自动复检（一次编辑可能产生额外一次云端调用）")
         self.reinspection.setChecked(runtime.ai_reinspection)
         self.max_calls = QSpinBox()
         self.max_calls.setRange(1, 2)
         self.max_calls.setValue(runtime.max_vision_calls)
         form.addRow("AI Provider", self.provider)
-        form.addRow("Gemini API Key", self.api_key)
-        form.addRow("Gemini Model", self.model)
+        form.addRow("Gemini API Key", self.gemini_api_key)
+        form.addRow("Gemini Model", self.gemini_model)
+        form.addRow("OpenAI API Key", self.openai_api_key)
+        form.addRow("OpenAI Model", self.openai_model)
         form.addRow("当前实际模型", self.current_model)
         form.addRow("Automatic Reinspection", self.reinspection)
         form.addRow("单次命令最多视觉调用", self.max_calls)
         return tab
+
+    def _refresh_current_model(self) -> None:
+        if self.provider.currentData() == "openai":
+            self.current_model.setText(self.openai_model.text().strip() or "gpt-5.6-terra")
+        elif self.provider.currentData() == "mock":
+            self.current_model.setText("Offline Mock")
+        else:
+            self.current_model.setText(self.gemini_model.text().strip() or "gemini-3.6-flash")
 
     def _build_ai_advanced_tab(self, runtime: RuntimeSettings) -> QWidget:
         tab = QWidget()
@@ -131,13 +151,14 @@ class SettingsDialog(QDialog):
 
     def _save(self) -> None:
         runtime = RuntimeSettings(
-            provider=self.provider.currentData(), gemini_model=self.model.text().strip() or "gemini-3.6-flash",
+            provider=self.provider.currentData(), gemini_model=self.gemini_model.text().strip() or "gemini-3.6-flash",
+            openai_model=self.openai_model.text().strip() or "gpt-5.6-terra",
             preview_size=self.preview_size.value(), ai_reinspection=self.reinspection.isChecked(),
             max_vision_calls=self.max_calls.value(), system_prompt=self.system_prompt.toPlainText().strip() or DEFAULT_SYSTEM_PROMPT,
             export_jpeg_quality=self.jpeg_quality.value(), performance_mode=self.performance.currentData(),
         )
         try:
-            self.manager.save(runtime, self.api_key.text())
+            self.manager.save(runtime, self.gemini_api_key.text(), self.openai_api_key.text())
             self.manager.store.setValue("ai/budget_mode", self.budget_mode.currentData())
             self.manager.store.setValue("ai/custom_daily_limit", self.custom_daily_limit.value())
             self.manager.store.sync()

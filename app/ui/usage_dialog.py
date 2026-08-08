@@ -14,7 +14,7 @@ class AIUsageDialog(QDialog):
         status = usage.status()
         limit = "已禁用" if not status.cloud_enabled else f"{status.today_count} / {status.daily_limit}"
         summary = QLabel(
-            f"今天：{limit}\n本月：{status.month_count}\n当前 Provider：{provider}\n当前模型：{runtime.gemini_model}\n\n这是本地安全上限，并不代表 Google 官方实时剩余额度。"
+            f"今天：{limit}\n本月：{status.month_count}\n当前 Provider：{provider}\n当前模型：{runtime.active_model}\n\n这是本地安全上限，并不代表云端服务官方实时剩余额度。"
         )
         summary.setWordWrap(True)
         table = QTableWidget(0, 5)

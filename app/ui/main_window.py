@@ -765,7 +765,7 @@ class MainWindow(QMainWindow):
         self._flush_history()
         self.runtime_settings = self.settings_manager.runtime()
         budget = self.usage_manager.status()
-        use_cloud = self.runtime_settings.provider != "mock" and bool(self.settings_manager.gemini_api_key())
+        use_cloud = self._cloud_provider_configured()
         if budget.mode == "disabled" and use_cloud:
             self.ai_panel.add_assistant_message("云端 AI 已在费用保护设置中禁用；本次未发送请求。")
             self._refresh_ai_status()
@@ -782,6 +782,7 @@ class MainWindow(QMainWindow):
             history_summary,
             self.runtime_settings,
             self.settings_manager.gemini_api_key(),
+            self.settings_manager.openai_api_key(),
             self.mask_panel.selected_mask_id,
         )
         self._ai_worker = worker
@@ -823,14 +824,14 @@ class MainWindow(QMainWindow):
         self._ai_worker = None
         self.ai_panel.set_busy(False)
         error = traceback_text if isinstance(traceback_text, AIRequestError) else AIRequestError(
-            "未知错误", str(traceback_text), model=self.runtime_settings.gemini_model
+            "未知错误", str(traceback_text), model=self.runtime_settings.active_model
         )
         self._last_ai_error = error
         self._ai_details = error.details()
         self.ai_panel.set_details_available(True)
         self.ai_panel.set_retry_available(bool(self._last_ai_prompt))
         self.ai_panel.add_assistant_message(
-            f"AI 请求失败\n类型：{error.category}\n模型：{error.model or self.runtime_settings.gemini_model}\n说明：{error.message}\n照片未发生任何修改。"
+            f"AI 请求失败\n类型：{error.category}\n模型：{error.model or self.runtime_settings.active_model}\n说明：{error.message}\n照片未发生任何修改。"
         )
         self.statusBar().showMessage(f"AI 请求失败：{error.category}；当前编辑未改变", 10000)
         self._refresh_ai_status()
@@ -877,13 +878,24 @@ class MainWindow(QMainWindow):
             return "Cloud disabled"
         if self.runtime_settings.provider == "mock":
             return "Offline Mock（仅用于测试）"
+        if self.runtime_settings.provider == "openai":
+            if self.settings_manager.openai_api_key():
+                return f"OpenAI 高质量 AI · {self.runtime_settings.openai_model}"
+            return "Offline Mock（未配置 OpenAI API Key）"
         if self.settings_manager.gemini_api_key():
             return f"Gemini {self.runtime_settings.gemini_model}"
         return "Offline Mock（未配置 API Key）"
 
+    def _cloud_provider_configured(self) -> bool:
+        if self.runtime_settings.provider == "gemini":
+            return bool(self.settings_manager.gemini_api_key())
+        if self.runtime_settings.provider == "openai":
+            return bool(self.settings_manager.openai_api_key())
+        return False
+
     def _refresh_ai_status(self, completed_provider: str | None = None) -> None:
         if completed_provider:
-            self.ai_panel.set_provider_status(f"本次规划：{completed_provider} · {self.runtime_settings.gemini_model}")
+            self.ai_panel.set_provider_status(f"本次规划：{completed_provider} · {self.runtime_settings.active_model}")
         else:
             self.ai_panel.set_provider_status(self._provider_status_text())
 

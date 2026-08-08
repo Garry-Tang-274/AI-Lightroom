@@ -152,3 +152,24 @@ def gemini_response_schema() -> dict:
             return [clean(item) for item in value]
         return value
     return clean(EditingPlan.model_json_schema())
+
+
+def openai_response_schema() -> dict:
+    """Return a strict Responses API schema for the same local EditingPlan.
+
+    OpenAI Structured Outputs requires every object to explicitly forbid extra
+    properties and to list each property as required. Optional Pydantic fields
+    remain nullable in their existing ``anyOf`` definitions.
+    """
+    def clean(value):
+        if isinstance(value, dict):
+            result = {key: clean(item) for key, item in value.items() if key != "default"}
+            properties = result.get("properties")
+            if isinstance(properties, dict):
+                result["additionalProperties"] = False
+                result["required"] = list(properties)
+            return result
+        if isinstance(value, list):
+            return [clean(item) for item in value]
+        return value
+    return clean(EditingPlan.model_json_schema())

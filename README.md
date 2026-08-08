@@ -22,15 +22,19 @@ Set-Location D:\AI-Lightroom
 
 AI 输入框支持多行文本：`Enter` 换行，`Ctrl+Enter` 发送。
 
-## 配置 Gemini
+## 配置 AI Provider
 
-在“文件 → 设置 → AI”中输入 API Key 和模型。Key 默认写入 Windows Credential Manager，不会写入项目、日志或 EXE。
+默认 Provider 是 Gemini。在“文件 → 设置 → AI”中可选择 Gemini、OpenAI（高质量 AI 模式）或离线 Mock；两个 Key 分别写入 Windows Credential Manager，不会写入项目、日志或 EXE。
+
+OpenAI 模式仅使用 Responses API 的视觉输入和严格 JSON `EditingPlan` 输出，不使用图片生成或编辑接口。默认模型为 `gpt-5.6-terra`，也可在设置中改为你账号可用、支持视觉与 Structured Outputs 的文本模型。
 
 也可创建本地 `.env`：
 
 ```dotenv
 GEMINI_API_KEY=your_key_here
 GEMINI_MODEL=gemini-3.6-flash
+OPENAI_API_KEY=your_key_here
+OPENAI_MODEL=gpt-5.6-terra
 ```
 
 环境变量优先于设置页。设置页可编辑系统提示词、关闭默认的自动复检，以及配置本地费用上限。免费保护模式的 `20 次/天` 仅是本地安全阈值，不代表 Google 的实时配额。

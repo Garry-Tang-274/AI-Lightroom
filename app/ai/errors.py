@@ -52,25 +52,25 @@ class AIRequestError(Exception):
         return "\n".join(lines)
 
 
-def error_from_exception(exc: Exception, *, model: str, request_sent: bool) -> AIRequestError:
+def error_from_exception(exc: Exception, *, model: str, request_sent: bool, provider: str = "Gemini") -> AIRequestError:
     if isinstance(exc, AIRequestError):
         return exc
     if isinstance(exc, ValidationError):
         return AIRequestError(
-            category="Pydantic schema 校验错误", message="Gemini 返回内容不符合 EditingPlan schema。",
-            model=model, local_exception=type(exc).__name__, validation_errors=exc.errors(include_url=False),
+            category="Pydantic schema 校验错误", message=f"{provider} 返回内容不符合 EditingPlan schema。",
+            provider=provider, model=model, local_exception=type(exc).__name__, validation_errors=exc.errors(include_url=False),
             request_sent=request_sent,
         )
     if isinstance(exc, socket.gaierror):
-        return AIRequestError("DNS 错误", "无法解析 Gemini 服务地址。", model=model, local_exception=type(exc).__name__)
+        return AIRequestError("DNS 错误", f"无法解析 {provider} 服务地址。", provider=provider, model=model, local_exception=type(exc).__name__)
     if isinstance(exc, ssl.SSLError):
-        return AIRequestError("TLS/SSL 错误", "与 Gemini 服务建立安全连接失败。", model=model, local_exception=type(exc).__name__)
+        return AIRequestError("TLS/SSL 错误", f"与 {provider} 服务建立安全连接失败。", provider=provider, model=model, local_exception=type(exc).__name__)
     if isinstance(exc, TimeoutError):
-        return AIRequestError("请求超时", "Gemini 请求超时。", model=model, local_exception=type(exc).__name__, request_sent=request_sent)
+        return AIRequestError("请求超时", f"{provider} 请求超时。", provider=provider, model=model, local_exception=type(exc).__name__, request_sent=request_sent)
     status = _status_from_exception(exc)
     message = _message_from_exception(exc)
     return AIRequestError(
-        category=_category_for_status(status, message), message=message, model=model, http_status=status,
+        category=_category_for_status(status, message, provider), message=message, provider=provider, model=model, http_status=status,
         provider_code=str(getattr(exc, "code", "") or ""), retry_after=_header_value(exc, "retry-after"),
         request_id=_header_value(exc, "x-request-id") or _header_value(exc, "x-goog-request-id"),
         local_exception=type(exc).__name__, request_sent=request_sent,
@@ -98,23 +98,23 @@ def _header_value(exc: Exception, name: str) -> str:
 
 def _message_from_exception(exc: Exception) -> str:
     text = str(exc).strip()
-    return text[:1600] if text else "Gemini 请求出现未知错误。"
+    return text[:1600] if text else "AI Provider 请求出现未知错误。"
 
 
-def _category_for_status(status: int | None, message: str) -> str:
+def _category_for_status(status: int | None, message: str, provider: str) -> str:
     lowered = message.lower()
     if status == 401:
         return "API Key 无效（HTTP 401）"
     if status == 403:
         return "API Key 权限不足（HTTP 403）"
     if status == 429:
-        return "Gemini API 配额或 Rate Limit（HTTP 429）"
+        return f"{provider} API 配额或 Rate Limit（HTTP 429）"
     if status is not None and status >= 500:
-        return "Gemini 服务器错误（5xx）"
+        return f"{provider} 服务器错误（5xx）"
     if "quota" in lowered:
-        return "Gemini API 配额耗尽"
+        return f"{provider} API 配额耗尽"
     if "rate" in lowered and "limit" in lowered:
-        return "Gemini Rate Limit"
+        return f"{provider} Rate Limit"
     if "token" in lowered and ("limit" in lowered or "too" in lowered):
         return "Token 限制"
     if "timeout" in lowered or "timed out" in lowered:
@@ -125,4 +125,4 @@ def _category_for_status(status: int | None, message: str) -> str:
         return "TLS/SSL 错误"
     if "connect" in lowered or "network" in lowered:
         return "网络不可用"
-    return "Gemini 请求错误"
+    return f"{provider} 请求错误"
