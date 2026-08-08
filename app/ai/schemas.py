@@ -77,8 +77,9 @@ class MaskParameters(StrictModel):
     end_y: float | None = Field(None, ge=0, le=1)
     center_x: float | None = Field(None, ge=0, le=1)
     center_y: float | None = Field(None, ge=0, le=1)
-    radius_x: float | None = Field(None, gt=0, le=1)
-    radius_y: float | None = Field(None, gt=0, le=1)
+    # Google GenAI's Schema model rejects JSON Schema ``exclusiveMinimum``.
+    radius_x: float | None = Field(None, ge=0.001, le=1)
+    radius_y: float | None = Field(None, ge=0.001, le=1)
     rotation: float | None = Field(None, ge=-180, le=180)
     min: float | None = Field(None, ge=0, le=1)
     max: float | None = Field(None, ge=0, le=1)
@@ -136,3 +137,18 @@ AVAILABLE_TOOLS = {
     "local_adjustments": list(LocalAdjustmentValues.model_fields),
 }
 
+
+def gemini_response_schema() -> dict:
+    """Return a Gemini-compatible copy while keeping local Pydantic validation strict.
+
+    Gemini's response-schema endpoint rejects JSON Schema's
+    ``additionalProperties`` field.  It is removed only from the wire schema;
+    ``StrictModel(extra='forbid')`` still rejects extra fields locally.
+    """
+    def clean(value):
+        if isinstance(value, dict):
+            return {key: clean(item) for key, item in value.items() if key != "additionalProperties"}
+        if isinstance(value, list):
+            return [clean(item) for item in value]
+        return value
+    return clean(EditingPlan.model_json_schema())

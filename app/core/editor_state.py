@@ -153,6 +153,19 @@ class MaskLayer(BaseModel):
     strokes: list[BrushStroke] = Field(default_factory=list)
 
 
+class WatermarkLayer(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid4()))
+    asset_id: str
+    name: str
+    enabled: bool = True
+    position: str = Field("bottom_right", pattern="^(top_left|top_right|bottom_left|bottom_right|center|custom)$")
+    x: float = Field(1.0, ge=0.0, le=1.0)
+    y: float = Field(1.0, ge=0.0, le=1.0)
+    scale: float = Field(0.18, ge=0.01, le=1.0)
+    opacity: float = Field(1.0, ge=0.0, le=1.0)
+    margin: float = Field(0.03, ge=0.0, le=0.25)
+
+
 def default_hsl() -> dict[HSLColor, HSLAdjustment]:
     return {color: HSLAdjustment() for color in HSLColor}
 
@@ -167,6 +180,7 @@ class EditorState(BaseModel):
     curves: CurveSettings = Field(default_factory=CurveSettings)
     color_grading: ColorGrading = Field(default_factory=ColorGrading)
     masks: list[MaskLayer] = Field(default_factory=list)
+    watermarks: list[WatermarkLayer] = Field(default_factory=list)
 
     def is_pristine(self) -> bool:
         return self == type(self)()

@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QSplitter,
     QTabWidget,
     QToolBar,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -25,6 +26,9 @@ from app.ui.image_view import ImageView
 from app.ui.mask_panel import MaskPanel
 from app.ui.render_worker import PreviewRenderWorker
 from app.ui.settings_dialog import SettingsDialog
+from app.ui.usage_dialog import AIUsageDialog
+from app.ui.watermark_panel import WatermarkPanel
+from app.ui.histogram_widget import HistogramWidget
 from app.ui.export_worker import ExportWorker
 from app.core.editor_state import (
     BrushPoint,
@@ -35,10 +39,15 @@ from app.core.editor_state import (
     HSLColor,
     MaskLayer,
     MaskType,
+    WatermarkLayer,
 )
 from app.core.history import HistoryManager
 from app.utils.io_utils import LoadedImage, load_image, make_preview
 from app.utils.config import SettingsManager
+from app.ai.errors import AIRequestError
+from app.ai.usage import AIUsageManager
+from app.core.watermarks import WatermarkLibrary
+from app.core.session_store import SessionStore
 
 
 class MainWindow(QMainWindow):
@@ -50,6 +59,9 @@ class MainWindow(QMainWindow):
         self.settings_manager = SettingsManager()
         self.runtime_settings = self.settings_manager.runtime()
         self.settings = self.settings_manager.store
+        self.usage_manager = AIUsageManager(self.settings)
+        self.watermark_library = WatermarkLibrary(self.settings)
+        self.session_store = SessionStore(self.settings)
         self.loaded_image: LoadedImage | None = None
         self.state = EditorState()
         self.history = HistoryManager()
@@ -70,6 +82,9 @@ class MainWindow(QMainWindow):
         self._export_worker = None
         self._ai_worker = None
         self._ai_details = ""
+        self._last_ai_error: AIRequestError | None = None
+        self._adjustment_clipboard: dict | None = None
+        self._showing_before = False
         self._build_actions()
         self._build_menu()
         self._build_toolbar()
@@ -77,6 +92,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("就绪 — 打开 JPG 或 PNG 开始编辑")
         self.adjustments.set_enabled_for_image(False)
         self.ai_panel.set_ready(False)
+        self._refresh_ai_status()
 
     def _build_actions(self) -> None:
         self.open_action = QAction("打开图片…", self)
@@ -107,6 +123,15 @@ class MainWindow(QMainWindow):
         self.reset_action.triggered.connect(self.reset_edits)
         self.settings_action = QAction("设置…", self)
         self.settings_action.triggered.connect(self.open_settings)
+        self.before_action = QAction("原图对比", self)
+        self.before_action.setShortcut(QKeySequence("\\"))
+        self.before_action.triggered.connect(self._toggle_before_after)
+        self.copy_adjustments_action = QAction("复制调整", self)
+        self.copy_adjustments_action.setShortcut(QKeySequence("Ctrl+Alt+C"))
+        self.copy_adjustments_action.triggered.connect(self.copy_adjustments)
+        self.paste_adjustments_action = QAction("粘贴调整", self)
+        self.paste_adjustments_action.setShortcut(QKeySequence("Ctrl+Alt+V"))
+        self.paste_adjustments_action.triggered.connect(self.paste_adjustments)
 
     def _build_menu(self) -> None:
         file_menu = self.menuBar().addMenu("文件")
@@ -120,10 +145,14 @@ class MainWindow(QMainWindow):
         edit_menu.addAction(self.undo_action)
         edit_menu.addAction(self.redo_action)
         edit_menu.addSeparator()
+        edit_menu.addAction(self.copy_adjustments_action)
+        edit_menu.addAction(self.paste_adjustments_action)
+        edit_menu.addSeparator()
         edit_menu.addAction(self.reset_action)
         view_menu = self.menuBar().addMenu("视图")
         view_menu.addAction(self.fit_action)
         view_menu.addAction(self.actual_action)
+        view_menu.addAction(self.before_action)
         help_menu = self.menuBar().addMenu("帮助")
         about = help_menu.addAction("关于 AI Lightroom")
         about.triggered.connect(self._show_about)
@@ -136,14 +165,26 @@ class MainWindow(QMainWindow):
         toolbar.addSeparator()
         toolbar.addAction(self.fit_action)
         toolbar.addAction(self.actual_action)
+        toolbar.addSeparator()
+        toolbar.addAction(self.undo_action)
+        toolbar.addAction(self.redo_action)
+        toolbar.addSeparator()
+        self.before_button = QToolButton()
+        self.before_button.setText("按住原图")
+        self.before_button.pressed.connect(self._show_before)
+        self.before_button.released.connect(self._show_after)
+        toolbar.addWidget(self.before_button)
         self.addToolBar(toolbar)
 
     def _build_workspace(self) -> None:
         self.image_view = ImageView()
         self.adjustments = AdjustmentPanel()
         self.ai_panel = AIPanel()
+        self.histogram = HistogramWidget()
         self.ai_panel.prompt_submitted.connect(self._run_ai_edit)
         self.ai_panel.details_requested.connect(self._show_ai_details)
+        self.ai_panel.cancel_requested.connect(self._cancel_ai_request)
+        self.ai_panel.usage_requested.connect(self._show_ai_usage)
         self.adjustments.adjustment_changed.connect(self._set_basic_adjustment)
         self.adjustments.hsl_changed.connect(self._set_hsl_adjustment)
         self.adjustments.curve_changed.connect(self._set_curve)
@@ -154,25 +195,36 @@ class MainWindow(QMainWindow):
         history = QListWidget()
         history.addItem("打开图片后显示历史记录")
         masks = MaskPanel()
+        watermarks = WatermarkPanel()
         left_tabs.addTab(history, "历史")
         left_tabs.addTab(masks, "蒙版")
+        left_tabs.addTab(watermarks, "水印")
         self.history_list = history
         self.history_list.currentRowChanged.connect(self._history_row_selected)
         self.mask_panel = masks
+        self.watermark_panel = watermarks
         self.mask_panel.create_mask_requested.connect(self._create_mask)
         self.mask_panel.remove_mask_requested.connect(self._remove_mask)
         self.mask_panel.local_adjustment_changed.connect(self._set_local_adjustment)
         self.mask_panel.mask_property_changed.connect(self._set_mask_property)
         self.mask_panel.brush_mode_changed.connect(self.image_view.set_brush_mode)
         self.image_view.brush_stroke_finished.connect(self._add_brush_stroke)
+        self.watermark_panel.import_requested.connect(self._import_watermark)
+        self.watermark_panel.remove_requested.connect(self._remove_watermark)
+        self.watermark_panel.property_changed.connect(self._set_watermark_property)
+        self.watermark_panel.library_rename_requested.connect(self._rename_watermark_asset)
+        self.watermark_panel.library_delete_requested.connect(self._delete_watermark_asset)
+        self.watermark_panel.library_default_requested.connect(self._set_default_watermark)
+        self.watermark_panel.default_add_requested.connect(self._add_default_watermark)
 
         right = QWidget()
         right_layout = QVBoxLayout(right)
         right_layout.setContentsMargins(0, 0, 0, 0)
         vertical = QSplitter(Qt.Orientation.Vertical)
         vertical.addWidget(self.adjustments)
+        vertical.addWidget(self.histogram)
         vertical.addWidget(self.ai_panel)
-        vertical.setSizes([590, 270])
+        vertical.setSizes([500, 150, 270])
         right_layout.addWidget(vertical)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -207,11 +259,32 @@ class MainWindow(QMainWindow):
         self.loaded_image = loaded
         self.state = EditorState()
         self.history.reset(self.state, f"打开：{loaded.path.name}")
+        recovered = self.session_store.load(loaded.path)
+        if recovered and recovered.get("state"):
+            answer = QMessageBox.question(
+                self, "恢复编辑", "发现这张照片的已保存编辑。是否恢复？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes,
+            )
+            if answer == QMessageBox.StandardButton.Yes:
+                try:
+                    self.state = EditorState.model_validate(recovered["state"])
+                    history_entries = recovered.get("history", [])
+                    if history_entries:
+                        first = EditorState.model_validate(history_entries[0]["state"])
+                        self.history.reset(first, str(history_entries[0].get("label", "打开图片")))
+                        for entry in history_entries[1:]:
+                            self.history.push(EditorState.model_validate(entry["state"]), str(entry.get("label", "编辑")))
+                except (KeyError, TypeError, ValueError):
+                    self.state = EditorState()
+                    self.history.reset(self.state, f"打开：{loaded.path.name}")
         self.preview_source = preview
         self.current_preview = preview.copy()
         self.adjustments.set_state(self.state)
         self.mask_panel.set_state(self.state)
+        self.watermark_panel.set_state(self.state)
         self.image_view.set_image(preview)
+        self.histogram.set_image(preview)
         self.settings.setValue("last_open_dir", str(loaded.path.parent))
         self.setWindowTitle(f"{loaded.path.name} — AI Lightroom")
         self.statusBar().showMessage(loaded.description)
@@ -219,6 +292,9 @@ class MainWindow(QMainWindow):
         self.adjustments.set_enabled_for_image(True)
         self.ai_panel.set_ready(True)
         self.export_action.setEnabled(True)
+        self._refresh_ai_status()
+        if not self.state.is_pristine():
+            self._queue_preview_render()
 
     def _set_basic_adjustment(self, key: str, value: float) -> None:
         if self.preview_source is None:
@@ -338,6 +414,82 @@ class MainWindow(QMainWindow):
         self.history.push(self.state, f"画笔：{layer.name}")
         self._refresh_history_ui()
 
+    def _import_watermark(self) -> None:
+        filename, _ = QFileDialog.getOpenFileName(self, "导入水印", str(Path.home()), "水印 (*.png *.jpg *.jpeg *.webp)")
+        if not filename:
+            return
+        try:
+            asset = self.watermark_library.add(filename)
+        except (OSError, ValueError) as exc:
+            QMessageBox.critical(self, "无法导入水印", str(exc))
+            return
+        layer = WatermarkLayer(asset_id=asset["id"], name=asset["name"])
+        self.state.watermarks.append(layer)
+        self.watermark_panel.set_state(self.state)
+        self._queue_preview_render()
+        self.history.push(self.state, "添加水印")
+        self._refresh_history_ui()
+
+    def _remove_watermark(self, layer_id: str) -> None:
+        original = len(self.state.watermarks)
+        self.state.watermarks = [layer for layer in self.state.watermarks if layer.id != layer_id]
+        if len(self.state.watermarks) == original:
+            return
+        self.watermark_panel.set_state(self.state)
+        self._queue_preview_render()
+        self.history.push(self.state, "移除水印")
+        self._refresh_history_ui()
+
+    def _set_watermark_property(self, layer_id: str, key: str, value) -> None:
+        layer = next((item for item in self.state.watermarks if item.id == layer_id), None)
+        if layer is None or key not in {"enabled", "position", "scale", "opacity", "margin"}:
+            return
+        setattr(layer, key, value)
+        self._queue_preview_render()
+        self._schedule_history("调整水印")
+
+    def _rename_watermark_asset(self, asset_id: str) -> None:
+        entry = next((item for item in self.watermark_library.entries() if item["id"] == asset_id), None)
+        if entry is None:
+            return
+        name, accepted = QInputDialog.getText(self, "重命名水印", "名称", text=entry["name"])
+        if not accepted or not name.strip():
+            return
+        self.watermark_library.rename(asset_id, name)
+        for layer in self.state.watermarks:
+            if layer.asset_id == asset_id:
+                layer.name = name.strip()
+        self.watermark_panel.set_state(self.state)
+        self._queue_preview_render()
+        self.history.push(self.state, "重命名水印")
+        self._refresh_history_ui()
+
+    def _set_default_watermark(self, asset_id: str) -> None:
+        self.watermark_library.set_default(asset_id)
+        self.statusBar().showMessage("已设置默认水印", 4000)
+
+    def _add_default_watermark(self) -> None:
+        entry = self.watermark_library.default()
+        if entry is None:
+            self.statusBar().showMessage("尚未设置默认水印", 4000)
+            return
+        self.state.watermarks.append(WatermarkLayer(asset_id=entry["id"], name=entry["name"]))
+        self.watermark_panel.set_state(self.state)
+        self._queue_preview_render()
+        self.history.push(self.state, "添加默认水印")
+        self._refresh_history_ui()
+
+    def _delete_watermark_asset(self, asset_id: str) -> None:
+        answer = QMessageBox.question(self, "删除水印库项目", "将从水印库删除该项目，并移除当前照片中使用它的图层。继续吗？")
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self.watermark_library.delete(asset_id)
+        self.state.watermarks = [layer for layer in self.state.watermarks if layer.asset_id != asset_id]
+        self.watermark_panel.set_state(self.state)
+        self._queue_preview_render()
+        self.history.push(self.state, "删除水印库项目")
+        self._refresh_history_ui()
+
     def _mask_by_id(self, mask_id: str):
         return next((layer for layer in self.state.masks if layer.id == mask_id), None)
 
@@ -349,6 +501,8 @@ class MainWindow(QMainWindow):
             return
         self.state = EditorState()
         self.adjustments.set_state(self.state)
+        self.mask_panel.set_state(self.state)
+        self.watermark_panel.set_state(self.state)
         self._render_generation += 1
         self._render_timer.stop()
         self._start_preview_render()
@@ -388,6 +542,7 @@ class MainWindow(QMainWindow):
         self.state = state
         self.adjustments.set_state(state)
         self.mask_panel.set_state(state)
+        self.watermark_panel.set_state(state)
         self._render_generation += 1
         self._render_timer.stop()
         self._start_preview_render()
@@ -403,6 +558,14 @@ class MainWindow(QMainWindow):
         self.history_list.blockSignals(False)
         self.undo_action.setEnabled(self.history.can_undo)
         self.redo_action.setEnabled(self.history.can_redo)
+        if self.loaded_image is not None:
+            self.session_store.save(self.loaded_image.path, self.state, self.history)
+
+    def closeEvent(self, event) -> None:  # noqa: N802
+        self._flush_history()
+        if self.loaded_image is not None:
+            self.session_store.save(self.loaded_image.path, self.state, self.history)
+        super().closeEvent(event)
 
     def export_image_dialog(self) -> None:
         if self.loaded_image is None:
@@ -465,12 +628,58 @@ class MainWindow(QMainWindow):
             return
         self.image_view.set_image(pixels)
         self.current_preview = pixels
+        self.histogram.set_image(pixels)
         self.statusBar().showMessage(f"{self.loaded_image.description}  •  已编辑")
 
     def _preview_failed(self, details: str, generation: int) -> None:
         if generation != self._render_generation:
             return
         self.statusBar().showMessage("预览渲染失败；已保留当前参数")
+
+    def _show_before(self) -> None:
+        if self.preview_source is not None:
+            self._showing_before = True
+            self.image_view.set_image(self.preview_source)
+            self.histogram.set_image(self.preview_source)
+            self.statusBar().showMessage("正在显示原图")
+
+    def _show_after(self) -> None:
+        if self._showing_before:
+            self._showing_before = False
+            if self.current_preview is not None:
+                self.image_view.set_image(self.current_preview)
+                self.histogram.set_image(self.current_preview)
+            self.statusBar().showMessage("已恢复编辑结果")
+
+    def _toggle_before_after(self) -> None:
+        if self._showing_before:
+            self._show_after()
+        else:
+            self._show_before()
+
+    def copy_adjustments(self) -> None:
+        if self.preview_source is None:
+            return
+        self._adjustment_clipboard = {
+            "basic": self.state.basic.model_dump(mode="json"),
+            "hsl": {key.value: value.model_dump(mode="json") for key, value in self.state.hsl.items()},
+            "curves": self.state.curves.model_dump(mode="json"),
+        }
+        self.statusBar().showMessage("已复制全局、HSL 和曲线调整（不含蒙版和水印）", 5000)
+
+    def paste_adjustments(self) -> None:
+        if self.preview_source is None or not self._adjustment_clipboard:
+            return
+        payload = self.state.model_dump(mode="json")
+        payload.update(self._adjustment_clipboard)
+        try:
+            self.state = EditorState.model_validate(payload)
+        except ValueError:
+            return
+        self.adjustments.set_state(self.state)
+        self._queue_preview_render()
+        self.history.push(self.state, "粘贴调整")
+        self._refresh_history_ui()
 
     def _run_ai_edit(self, prompt: str) -> None:
         if self.preview_source is None:
@@ -481,6 +690,16 @@ class MainWindow(QMainWindow):
             return
         self._flush_history()
         self.runtime_settings = self.settings_manager.runtime()
+        budget = self.usage_manager.status()
+        use_cloud = self.runtime_settings.provider != "mock" and bool(self.settings_manager.gemini_api_key())
+        if budget.mode == "disabled" and use_cloud:
+            self.ai_panel.add_assistant_message("云端 AI 已在费用保护设置中禁用；本次未发送请求。")
+            self._refresh_ai_status()
+            return
+        if use_cloud and not budget.can_request:
+            self.ai_panel.add_assistant_message("已达到 AI Lightroom 设置的每日云端调用上限。为了防止意外费用，云端 AI 已暂停。")
+            self._refresh_ai_status()
+            return
         history_summary = [entry.label for entry in self.history.entries[-8:]]
         worker = AIEditWorker(
             prompt,
@@ -495,6 +714,7 @@ class MainWindow(QMainWindow):
         worker.signals.finished.connect(self._ai_finished)
         worker.signals.failed.connect(self._ai_failed)
         self.ai_panel.set_busy(True)
+        self._last_ai_error = None
         self.statusBar().showMessage("AI 正在分析当前画面和编辑状态…")
         self._render_pool.start(worker)
 
@@ -510,6 +730,7 @@ class MainWindow(QMainWindow):
         self._start_preview_render()
         self.ai_panel.set_busy(False)
         self.ai_panel.set_result_info(result.provider_name, True)
+        self._refresh_ai_status(result.provider_name)
         self.ai_panel.add_assistant_message(result.final_plan.summary)
         details = [
             f"方案：{result.final_plan.summary}",
@@ -526,21 +747,65 @@ class MainWindow(QMainWindow):
     def _ai_failed(self, traceback_text: str) -> None:
         self._ai_worker = None
         self.ai_panel.set_busy(False)
-        last_line = next((line.strip() for line in reversed(traceback_text.splitlines()) if line.strip()), "未知错误")
-        self.ai_panel.add_assistant_message(f"这次 AI 请求失败：{last_line}。当前编辑状态未改变。")
-        self.statusBar().showMessage("AI 请求失败；当前编辑未改变", 8000)
+        error = traceback_text if isinstance(traceback_text, AIRequestError) else AIRequestError(
+            "未知错误", str(traceback_text), model=self.runtime_settings.gemini_model
+        )
+        self._last_ai_error = error
+        self._ai_details = error.details()
+        self.ai_panel.set_details_available(True)
+        self.ai_panel.add_assistant_message(
+            f"AI 请求失败\n类型：{error.category}\n模型：{error.model or self.runtime_settings.gemini_model}\n说明：{error.message}\n照片未发生任何修改。"
+        )
+        self.statusBar().showMessage(f"AI 请求失败：{error.category}；当前编辑未改变", 10000)
+        self._refresh_ai_status()
 
     def _show_ai_details(self) -> None:
         if self._ai_details:
-            QMessageBox.information(self, "AI 调整详情", self._ai_details)
+            box = QMessageBox(self)
+            box.setWindowTitle("AI 错误详情" if self._last_ai_error else "AI 调整详情")
+            box.setText(self._ai_details)
+            if self._last_ai_error:
+                copy_button = box.addButton("复制错误详情", QMessageBox.ButtonRole.ActionRole)
+                box.addButton(QMessageBox.StandardButton.Close)
+                box.exec()
+                if box.clickedButton() is copy_button:
+                    from PySide6.QtWidgets import QApplication
+                    QApplication.clipboard().setText(self._ai_details)
+            else:
+                box.exec()
 
     def open_settings(self) -> None:
         dialog = SettingsDialog(self.settings_manager, self)
         if dialog.exec():
             self.runtime_settings = self.settings_manager.runtime()
             self._render_pool.setMaxThreadCount(self.runtime_settings.worker_threads)
-            provider = "Gemini" if self.settings_manager.gemini_api_key() and self.runtime_settings.provider != "mock" else "Mock（离线）"
-            self.ai_panel.provider_label.setText(f"当前将使用：{provider}")
+            self._refresh_ai_status()
+
+    def _cancel_ai_request(self) -> None:
+        if self._ai_worker is not None:
+            self._ai_worker.cancel()
+            self.ai_panel.add_assistant_message("已请求取消本地等待；已经发出的云端请求可能仍计入调用。")
+            self.statusBar().showMessage("正在等待当前 AI 请求安全结束…", 5000)
+
+    def _show_ai_usage(self) -> None:
+        provider = self._provider_status_text()
+        AIUsageDialog(self.usage_manager, self.runtime_settings, provider, self).exec()
+
+    def _provider_status_text(self) -> str:
+        budget = self.usage_manager.status()
+        if budget.mode == "disabled":
+            return "Cloud disabled"
+        if self.runtime_settings.provider == "mock":
+            return "Offline Mock（仅用于测试）"
+        if self.settings_manager.gemini_api_key():
+            return f"Gemini {self.runtime_settings.gemini_model}"
+        return "Offline Mock（未配置 API Key）"
+
+    def _refresh_ai_status(self, completed_provider: str | None = None) -> None:
+        if completed_provider:
+            self.ai_panel.set_provider_status(f"本次规划：{completed_provider} · {self.runtime_settings.gemini_model}")
+        else:
+            self.ai_panel.set_provider_status(self._provider_status_text())
 
     def _show_about(self) -> None:
         QMessageBox.about(

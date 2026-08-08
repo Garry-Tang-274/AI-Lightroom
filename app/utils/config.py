@@ -8,6 +8,7 @@ from dotenv import find_dotenv, load_dotenv
 from PySide6.QtCore import QSettings
 
 from app.utils.secure_store import WindowsCredentialStore
+from app.ai.system_prompt import DEFAULT_SYSTEM_PROMPT
 
 
 CREDENTIAL_TARGET = "AI Lightroom/Gemini API Key"
@@ -18,8 +19,9 @@ class RuntimeSettings:
     provider: str = "auto"
     gemini_model: str = "gemini-3.6-flash"
     preview_size: int = 1280
-    ai_reinspection: bool = True
+    ai_reinspection: bool = False
     max_vision_calls: int = 2
+    system_prompt: str = DEFAULT_SYSTEM_PROMPT
     export_jpeg_quality: int = 92
     performance_mode: str = "balanced"
 
@@ -42,8 +44,9 @@ class SettingsManager:
             provider=str(self.store.value("ai/provider", "auto")),
             gemini_model=str(model),
             preview_size=_bounded_int(self.store.value("performance/preview_size", 1280), 640, 2048, 1280),
-            ai_reinspection=_as_bool(self.store.value("ai/reinspection", True)),
+            ai_reinspection=_as_bool(self.store.value("ai/reinspection", False)),
             max_vision_calls=_bounded_int(self.store.value("ai/max_vision_calls", 2), 1, 2, 2),
+            system_prompt=str(self.store.value("ai/system_prompt", DEFAULT_SYSTEM_PROMPT) or DEFAULT_SYSTEM_PROMPT),
             export_jpeg_quality=_bounded_int(self.store.value("export/jpeg_quality", 92), 1, 100, 92),
             performance_mode=str(self.store.value("performance/mode", "balanced")),
         )
@@ -65,6 +68,7 @@ class SettingsManager:
         self.store.setValue("performance/preview_size", settings.preview_size)
         self.store.setValue("ai/reinspection", settings.ai_reinspection)
         self.store.setValue("ai/max_vision_calls", settings.max_vision_calls)
+        self.store.setValue("ai/system_prompt", settings.system_prompt)
         self.store.setValue("export/jpeg_quality", settings.export_jpeg_quality)
         self.store.setValue("performance/mode", settings.performance_mode)
         self.store.sync()

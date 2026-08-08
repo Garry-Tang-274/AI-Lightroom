@@ -9,6 +9,7 @@ from PIL import Image
 from pydantic import ValidationError
 
 from app.ai.gemini_provider import GeminiProvider
+from app.ai.errors import AIRequestError
 from app.ai.provider import PlanningRequest
 from app.core.editor_state import EditorState
 from app.core.masks import generate_mask
@@ -61,7 +62,7 @@ def test_invalid_ai_json_is_rejected_without_partial_state():
 
     provider = GeminiProvider("", "test", client=SimpleNamespace(models=BrokenModels()))
     state = EditorState()
-    with pytest.raises(ValidationError):
+    with pytest.raises(AIRequestError, match="严格 EditingPlan"):
         provider.plan(PlanningRequest("edit", state, None, []))
     assert state.is_pristine()
 

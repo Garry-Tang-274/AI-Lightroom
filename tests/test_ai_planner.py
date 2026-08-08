@@ -98,3 +98,4 @@ def test_gemini_provider_uses_structured_schema_and_parses_response():
     assert parsed.global_adjustments[0].value == 5
     assert fake.models.kwargs["model"] == "gemini-test"
     assert len(fake.models.kwargs["contents"]) == 2
+    assert fake.models.kwargs["config"].http_options.retry_options.attempts == 1

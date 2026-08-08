@@ -5,6 +5,7 @@ import numpy as np
 
 from app.core.editor_state import EditorState, HSLColor, LocalAdjustments, ToneCurve
 from app.core.masks import generate_mask
+from app.core.watermarks import composite_watermarks
 
 
 _HSL_CENTERS = {
@@ -53,7 +54,8 @@ def render_image(source: np.ndarray, state: EditorState) -> np.ndarray:
             continue
         adjusted = _apply_local_adjustments(image, layer.adjustments)
         image = image * (1.0 - mask) + adjusted * mask
-    return np.clip(np.rint(image * 255.0), 0, 255).astype(np.uint8)
+    rendered = np.clip(np.rint(image * 255.0), 0, 255).astype(np.uint8)
+    return composite_watermarks(rendered, state.watermarks)
 
 
 def _apply_local_adjustments(image: np.ndarray, local: LocalAdjustments) -> np.ndarray:

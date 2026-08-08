@@ -6,6 +6,7 @@ from PIL import Image
 from app.ui.main_window import MainWindow
 from app.utils.io_utils import load_image, make_preview
 from app.utils.config import RuntimeSettings
+from app.ai.usage import BudgetStatus
 
 
 def test_load_image_and_preview(tmp_path):
@@ -72,3 +73,39 @@ def test_offline_ai_command_updates_visible_state(qtbot, tmp_path, monkeypatch):
     assert window.state.basic.contrast > 0
     assert any(layer.type.value == "sky" for layer in window.state.masks)
     assert window.adjustments.controls["contrast"].slider.value() > 0
+    assert len(window.history.entries) == 2
+    window.undo()
+    assert window.state.is_pristine()
+
+
+def test_budget_limit_blocks_cloud_worker_without_sending(qtbot, tmp_path, monkeypatch):
+    source = tmp_path / "budget.jpg"
+    Image.new("RGB", (100, 80), (80, 100, 120)).save(source)
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.open_image(str(source))
+    monkeypatch.setattr(window.settings_manager, "runtime", lambda: RuntimeSettings(provider="gemini"))
+    monkeypatch.setattr(window.settings_manager, "gemini_api_key", lambda: "configured")
+    monkeypatch.setattr(window.usage_manager, "status", lambda: BudgetStatus("free", 20, 20, 20))
+    window._run_ai_edit("轻微调整")
+    assert window._ai_worker is None
+    assert "每日云端调用上限" in window.ai_panel.transcript.toPlainText()
+
+
+def test_copy_paste_adjustments_and_before_after(qtbot, tmp_path):
+    first = tmp_path / "first.jpg"
+    second = tmp_path / "second.jpg"
+    Image.new("RGB", (100, 80), (80, 100, 120)).save(first)
+    Image.new("RGB", (100, 80), (120, 90, 80)).save(second)
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.open_image(str(first))
+    window._set_basic_adjustment("contrast", 12)
+    window.copy_adjustments()
+    window.open_image(str(second))
+    window.paste_adjustments()
+    assert window.state.basic.contrast == 12
+    window._show_before()
+    assert window._showing_before
+    window._show_after()
+    assert not window._showing_before

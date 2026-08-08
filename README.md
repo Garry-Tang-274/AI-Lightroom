@@ -1,67 +1,62 @@
-# AI Lightroom
+# AI Lightroom V0.2
 
-AI Lightroom 是一个 Windows 非破坏式桌面照片编辑器。传统滑块、HSL、曲线、局部蒙版和 AI 规划共用同一个 `EditorState`；预览和导出始终从原图与当前状态重新渲染，不会反复烧录处理结果。
+AI Lightroom 是一个 Windows 非破坏式桌面修图应用。传统滑块、HSL、曲线、蒙版和 AI 规划共享同一份 `EditorState`；预览和导出始终从原图与当前状态重新渲染，不会反复烧录处理结果。
 
 ## 当前功能
 
-- JPG / PNG 打开、缩放、适合窗口和全分辨率导出
-- 曝光、明暗、白平衡、饱和度、清晰度、纹理、去朦胧、锐化和暗角
-- 八色 HSL、RGB 与分通道曲线、阴影/中间调/高光色彩分级
-- Undo / Redo / Reset 和可点击历史记录
-- 线性、径向、明度、颜色范围、天空、主体、常见语义区域和画笔蒙版
-- 严格可验证的 AI Editing DSL；AI 只能调用软件真实支持的操作
-- Gemini 多模态 Provider 与离线 Mock Provider
-- 后续自然语言命令基于当前状态继续修改；简单的“淡一点”不会重复上传预览
-- 设置页、后台 AI/导出任务、Windows 凭据管理器存储 API Key
+- JPG/PNG 打开、缩放、适配画布、直方图、原图按住对比、Undo/Redo、复制/粘贴调整。
+- 基础调整、8 色 HSL、RGB/分通道曲线、色彩分级、局部蒙版和画笔。
+- 全分辨率 JPG/PNG 导出，保留可用的 EXIF、ICC 和 DPI 元数据。
+- PNG/JPG/WEBP 水印库；水印以非破坏式图层显示在预览和导出中。
+- 自动恢复同一张照片的编辑状态与历史（保存于应用配置，不在照片旁生成文件）。
+- Gemini structured output：严格 `EditingPlan` schema、本地二次 Pydantic 校验、不会以生成式重绘替代像素编辑。
+- 离线 Mock Provider：未配置 Key 时可完整验证 AI → 编辑计划 → 渲染流程。
+- AI 费用保护：默认每天本地上限 20 次、无自动重试、使用记录和可见 Provider 状态。
 
-## 直接运行
+## 运行
 
 ```powershell
+Set-Location D:\AI-Lightroom
 .\.venv\Scripts\python.exe -m app.main
 ```
 
-没有 Gemini API Key 时，AI 面板自动使用离线 Mock，核心流程仍可完整体验。
+AI 输入框支持多行文本：`Enter` 换行，`Ctrl+Enter` 发送。
 
 ## 配置 Gemini
 
-推荐在应用的“文件 → 设置”中填写 API Key。Key 保存到 Windows 凭据管理器，不进入项目目录。
+在“文件 → 设置 → AI”中输入 API Key 和模型。Key 默认写入 Windows Credential Manager，不会写入项目、日志或 EXE。
 
-也可以复制 `.env.example` 为 `.env` 并填写：
+也可创建本地 `.env`：
 
 ```dotenv
 GEMINI_API_KEY=your_key_here
 GEMINI_MODEL=gemini-3.6-flash
 ```
 
-模型名可随时在设置页或 `.env` 中更换，不写死在编辑引擎里。`.env` 已被 Git 忽略。
+环境变量优先于设置页。设置页可编辑系统提示词、关闭默认的自动复检，以及配置本地费用上限。免费保护模式的 `20 次/天` 仅是本地安全阈值，不代表 Google 的实时配额。
 
-## 开发环境
-
-需要 Python 3.11–3.13。首次重建环境：
+## 开发与测试
 
 ```powershell
-py -3.12 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-```
-
-运行测试：
-
-```powershell
-$env:QT_QPA_PLATFORM = "offscreen"
-.\.venv\Scripts\python.exe -m pytest
+Set-Location D:\AI-Lightroom
+$env:QT_QPA_PLATFORM = 'offscreen'
+.\.venv\Scripts\python.exe -m pytest -q
 ```
 
 ## Windows 打包
 
 ```powershell
+Set-Location D:\AI-Lightroom
 .\scripts\build_windows.ps1
+& '.\dist\AI Lightroom\AI Lightroom.exe' --smoke-test
 ```
 
-输出位于 `dist\AI Lightroom\AI Lightroom.exe`。API Key 和用户照片不会打入 EXE。
+打包输出：`dist\AI Lightroom\AI Lightroom.exe`。API Key、用户照片、水印库和会话数据均不进入 Git 或 EXE。
 
-## 当前限制
+## 已知限制
 
-- 第一版只支持 JPG / PNG；RAW、16 位完整管线和相机配置文件仍待扩展。
-- 天空、主体和语义蒙版使用轻量本地算法，速度和安装体积优先，复杂边缘不等同于大型分割模型。
-- 曲线为确定性的分段线性曲线；尚未提供 Lightroom 目录管理和批量同步。
-- GPU 已检测但第一版渲染器使用 OpenCV / CPU；AI 请求由云端 Gemini 或离线 Mock 负责规划。
+- 当前正式输入为 JPG/PNG；RAW、16-bit 和完整 ICC 工作流尚未实现。
+- 天空/主体/语义蒙版采用轻量本地算法，复杂边缘不等同于大型分割模型。
+- 曲线为分段线性；渲染当前使用 OpenCV/CPU。
+- 水印支持锚点位置、大小、不透明度和边距；直接拖动、旋转与阴影尚未实现。
+- 本地调用计数保守记录已发起的云端请求；它不是 Google 后台账单或额度查询。
