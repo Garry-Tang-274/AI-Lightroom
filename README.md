@@ -21,6 +21,9 @@ Formally supported now:
 - Alibaba Cloud Model Studio / DashScope: `qwen3.7-plus`
 - Custom OpenAI-compatible API
 - Offline Mock (no network)
+- JarvisArt Local: a local native-output adapter. `Mock Native` is included for
+  safe UI/renderer verification; `Real Native` remains a visible official-model
+  runtime placeholder and never falls back to a cloud provider.
 
 The provider registry declares each adapter's capabilities (vision, structured output, multi-image input, image generation/editing, streaming, and custom Base URL). Future adapters can be registered without changing the color-grading core.
 
@@ -30,6 +33,10 @@ Open **File → Settings → AI** and choose a provider.
 
 - **Qwen**: enter your Model Studio API Key. Default model: `qwen3.7-plus`. Default Beijing Base URL: `https://dashscope.aliyuncs.com/compatible-mode/v1`. Replace it with the region/workspace URL shown by your Model Studio console when needed.
 - **Custom / OpenAI-compatible**: enter a provider name, Base URL ending in the compatible API version path (usually `/v1`), API Key, and Model ID. Enable Vision and structured JSON only when the service actually supports them.
+- **JarvisArt Local**: no API key, no cloud budget, and no photo upload. Choose
+  `Mock Native` to exercise the bundled native-plan adapter. `Real Native`
+  currently reports that an official local runtime must be installed; it does
+  not download weights or substitute a different model.
 - **Test connection** sends one small, user-initiated text request. It may consume provider quota/cost.
 
 API keys are stored in Windows Credential Manager, separately from normal settings. Environment variables override the credential store. Keys are never committed, logged, embedded in the EXE, or placed in the README.

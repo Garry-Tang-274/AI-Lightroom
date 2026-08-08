@@ -1,0 +1,15 @@
+{
+  "summary": "压低整体曝光并加强层次。",
+  "reasoning_summary": "保留高光空间，增强克制的对比。",
+  "global_adjustments": [
+    {"parameter": "Exposure2012", "value": -0.35},
+    {"parameter": "Contrast2012", "value": 14},
+    {"parameter": "Highlights2012", "value": -18},
+    {"parameter": "Vibrance", "value": -6}
+  ],
+  "hsl_adjustments": [],
+  "curves": [],
+  "local_regions": [],
+  "unsupported_operations": [],
+  "confidence": 0.88
+}

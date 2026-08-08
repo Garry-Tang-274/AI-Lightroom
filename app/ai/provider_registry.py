@@ -4,6 +4,7 @@ from collections.abc import Callable
 
 from app.ai.capabilities import ProviderCapabilities, ProviderConfig, ProviderDescriptor
 from app.ai.gemini_provider import GeminiProvider
+from app.ai.jarvisart.provider import JarvisArtProvider
 from app.ai.mock_provider import MockProvider
 from app.ai.openai_compatible_provider import OpenAICompatibleProvider
 from app.ai.openai_provider import OpenAIProvider
@@ -31,7 +32,7 @@ class ProviderRegistry:
     def descriptor(self, provider_id: str) -> ProviderDescriptor:
         return self._descriptors.get(provider_id, self._descriptors["mock"])
 
-    def make_config(self, provider_id: str, model: str = "", base_url: str = "", display_name: str = "", *, custom_vision: bool = True, custom_structured_output: bool = True) -> ProviderConfig:
+    def make_config(self, provider_id: str, model: str = "", base_url: str = "", display_name: str = "", *, custom_vision: bool = True, custom_structured_output: bool = True, local_mode: str = "mock") -> ProviderConfig:
         descriptor = self.descriptor(provider_id)
         capabilities = descriptor.capabilities
         if descriptor.is_custom:
@@ -49,6 +50,7 @@ class ProviderRegistry:
             base_url=(base_url.strip() or descriptor.default_base_url).rstrip("/"),
             display_name=display_name.strip() or descriptor.display_name,
             capabilities=capabilities,
+            local_mode=local_mode if local_mode in {"mock", "real"} else "mock",
         )
 
     def create(self, config: ProviderConfig, api_key: str, *, system_prompt: str = DEFAULT_SYSTEM_PROMPT, on_request_started=None, on_result=None, client=None):
@@ -86,6 +88,10 @@ def _mock(config, api_key, **kwargs):
     return MockProvider()
 
 
+def _jarvisart(config, api_key, **kwargs):
+    return JarvisArtProvider(config, **kwargs)
+
+
 VISION_STRUCTURED = ProviderCapabilities(
     supports_vision=True, supports_multiple_images=True,
     supports_structured_output=True, supports_text_chat=True,
@@ -98,3 +104,4 @@ provider_registry.register(ProviderDescriptor("openai", "OpenAI（高质量 AI �
 provider_registry.register(ProviderDescriptor("qwen", "阿里云百炼 / Qwen", "qwen3.7-plus", QWEN_DEFAULT_BASE_URL, api_key_environment="DASHSCOPE_API_KEY", capabilities=ProviderCapabilities(supports_vision=True, supports_multiple_images=True, supports_structured_output=True, supports_text_chat=True, supports_streaming=True, supports_custom_base_url=True)), _qwen)
 provider_registry.register(ProviderDescriptor("custom", "Custom / OpenAI-compatible API", "", "", api_key_environment="AI_LIGHTROOM_CUSTOM_API_KEY", capabilities=ProviderCapabilities(supports_vision=True, supports_multiple_images=True, supports_structured_output=True, supports_text_chat=True, supports_streaming=True, supports_custom_base_url=True), is_custom=True), _compatible)
 provider_registry.register(ProviderDescriptor("mock", "离线 Mock", "offline", requires_api_key=False, capabilities=ProviderCapabilities(supports_vision=True, supports_structured_output=True, supports_text_chat=True)), _mock)
+provider_registry.register(ProviderDescriptor("jarvisart_local", "JarvisArt Local", "JarvisArt-1208", requires_api_key=False, capabilities=ProviderCapabilities(supports_vision=True, supports_structured_output=True, supports_text_chat=True)), _jarvisart)

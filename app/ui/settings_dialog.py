@@ -62,6 +62,11 @@ class SettingsDialog(QDialog):
         self.base_url.setPlaceholderText("https://…/v1")
         self.custom_vision = QCheckBox("服务支持 Vision / 图片输入")
         self.custom_structured = QCheckBox("服务支持 JSON structured output")
+        self.jarvisart_mode = QComboBox()
+        self.jarvisart_mode.addItem("Mock Native（本地 fixture）", "mock")
+        self.jarvisart_mode.addItem("Real Native（官方本地模型）", "real")
+        self.jarvisart_status = QLabel()
+        self.jarvisart_status.setWordWrap(True)
         self.reinspection = QCheckBox("AI 自动复检（默认关闭；开启时一次命令最多可能额外调用一次）")
         self.reinspection.setChecked(self.runtime.ai_reinspection)
         self.max_calls = QSpinBox()
@@ -79,6 +84,8 @@ class SettingsDialog(QDialog):
         form.addRow("Base URL（OpenAI-compatible）", self.base_url)
         form.addRow("Custom 能力", self.custom_vision)
         form.addRow("", self.custom_structured)
+        form.addRow("JarvisArt 运行模式", self.jarvisart_mode)
+        form.addRow("JarvisArt 状态", self.jarvisart_status)
         form.addRow("Automatic Reinspection", self.reinspection)
         form.addRow("单次命令最多视觉调用", self.max_calls)
         form.addRow("支持能力", self.capability_label)
@@ -109,6 +116,7 @@ class SettingsDialog(QDialog):
                 previous_id, self.model.text(), self.base_url.text(), self.custom_name.text(),
                 custom_vision=self.custom_vision.isChecked(),
                 custom_structured_output=self.custom_structured.isChecked(),
+                local_mode=str(self.jarvisart_mode.currentData()),
             ),
             self.api_key.text(),
         )
@@ -137,7 +145,16 @@ class SettingsDialog(QDialog):
         self.custom_structured.setEnabled(descriptor.is_custom)
         self.custom_vision.setChecked(config.capabilities.supports_vision)
         self.custom_structured.setChecked(config.capabilities.supports_structured_output)
-        self.provider_description.setText("离线 Provider，不发送照片或网络请求。" if not descriptor.requires_api_key else "使用用户自己的 API Key；仅发送缩小 JPEG Preview 和当前编辑状态。")
+        self.jarvisart_mode.setCurrentIndex(max(0, self.jarvisart_mode.findData(config.local_mode)))
+        is_jarvisart = provider_id == "jarvisart_local"
+        self.jarvisart_mode.setEnabled(is_jarvisart)
+        if is_jarvisart:
+            status = "Mock Native Ready：使用本地原生输出 fixture，不上传照片、不调用云端、无 API 费用。" if config.local_mode == "mock" else "Real Model Not Installed：尚未部署官方 JarvisArt-1208 本地运行时；不会自动回退到云端。"
+            self.provider_description.setText("JarvisArt Local 在本机处理缩小预览；不会上传原图，也不使用云端 AI 额度。")
+            self.jarvisart_status.setText(status)
+        else:
+            self.provider_description.setText("离线 Provider，不发送照片或网络请求。" if not descriptor.requires_api_key else "使用用户自己的 API Key；仅发送缩小 JPEG Preview 和当前编辑状态。")
+            self.jarvisart_status.setText("仅在选择 JarvisArt Local 时可用。")
         caps = config.capabilities
         self.capability_label.setText("Vision：{} · 多图：{} · JSON：{} · 图片生成：{} · 图片编辑：{}".format(*["支持" if value else "不支持" for value in (caps.supports_vision, caps.supports_multiple_images, caps.supports_structured_output, caps.supports_image_generation, caps.supports_image_editing)]))
         self.test_button.setEnabled(descriptor.requires_api_key)
@@ -146,6 +163,7 @@ class SettingsDialog(QDialog):
         return provider_registry.make_config(
             str(self.provider.currentData()), self.model.text(), self.base_url.text(), self.custom_name.text(),
             custom_vision=self.custom_vision.isChecked(), custom_structured_output=self.custom_structured.isChecked(),
+            local_mode=str(self.jarvisart_mode.currentData()),
         )
 
     def _test_connection(self) -> None:
@@ -239,6 +257,7 @@ class SettingsDialog(QDialog):
             custom_provider_name=self.custom_name.text().strip(),
             custom_supports_vision=self.custom_vision.isChecked(),
             custom_supports_structured_output=self.custom_structured.isChecked(),
+            jarvisart_mode=str(self.jarvisart_mode.currentData()),
             preview_size=self.preview_size.value(), ai_reinspection=self.reinspection.isChecked(), max_vision_calls=self.max_calls.value(),
             system_prompt=self.system_prompt.toPlainText().strip() or DEFAULT_SYSTEM_PROMPT,
             export_jpeg_quality=self.jpeg_quality.value(), performance_mode=self.performance.currentData(),

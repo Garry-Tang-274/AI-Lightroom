@@ -37,7 +37,7 @@ def test_registry_exposes_decoupled_provider_metadata_and_capabilities():
     assert qwen.capabilities.supports_vision
     assert qwen.capabilities.supports_structured_output
     assert provider_registry.descriptor("custom").capabilities.supports_custom_base_url
-    assert {item.id for item in provider_registry.descriptors()} >= {"gemini", "openai", "qwen", "custom", "mock"}
+    assert {item.id for item in provider_registry.descriptors()} >= {"gemini", "openai", "qwen", "custom", "mock", "jarvisart_local"}
 
 
 def test_qwen_vision_json_plan_drives_existing_renderer_without_network():
@@ -136,6 +136,7 @@ def test_settings_exposes_qwen_and_custom_provider_choices(qtbot, tmp_path):
     qtbot.addWidget(dialog)
     assert dialog.provider.findData("qwen") >= 0
     assert dialog.provider.findData("custom") >= 0
+    assert dialog.provider.findData("jarvisart_local") >= 0
     assert dialog.model.text() == "qwen3.7-plus"
     assert dialog.base_url.text() == QWEN_DEFAULT_BASE_URL
 

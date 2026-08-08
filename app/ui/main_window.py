@@ -829,6 +829,10 @@ class MainWindow(QMainWindow):
             details.append("\n参数与局部调整：\n- " + "\n- ".join(result.changed_fields))
         if result.created_masks:
             details.append("\n创建蒙版：\n- " + "\n- ".join(result.created_masks))
+        if result.unsupported_operations:
+            warning = f"JarvisArt 请求了 {len(result.unsupported_operations)} 个当前不支持的 Lightroom 操作；未静默执行。"
+            self.ai_panel.add_assistant_message(warning)
+            details.append("\n未支持的 JarvisArt 操作：\n- " + "\n- ".join(result.unsupported_operations))
         self._ai_details = "\n".join(details)
 
     def _ai_failed(self, traceback_text: str) -> None:
@@ -887,13 +891,16 @@ class MainWindow(QMainWindow):
         AIUsageDialog(self.usage_manager, self.runtime_settings, provider, self).exec()
 
     def _provider_status_text(self) -> str:
-        budget = self.usage_manager.status()
-        if budget.mode == "disabled":
-            return "Cloud disabled"
         config = self.runtime_settings.provider_config
         descriptor = provider_registry.descriptor(config.provider_id)
         if not descriptor.requires_api_key:
+            if config.provider_id == "jarvisart_local":
+                state = "Mock Native Ready" if config.local_mode == "mock" else "Real Model Not Installed"
+                return f"JarvisArt Local · {state} · 本地，无云端费用"
             return descriptor.display_name
+        budget = self.usage_manager.status()
+        if budget.mode == "disabled":
+            return "Cloud disabled"
         if self.settings_manager.has_provider_key(config.provider_id):
             return f"{config.display_name} · {config.model}"
         return f"未配置 {config.display_name} API Key"

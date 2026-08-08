@@ -1,0 +1,16 @@
+{
+  "summary": "收敛蓝色并建立温和曲线。",
+  "reasoning_summary": "降低蓝色饱和度并避免 HDR 感。",
+  "global_adjustments": [],
+  "hsl_adjustments": [
+    {"color": "blue", "hue": -4, "saturation": -12, "luminance": -5},
+    {"color": "orange", "hue": 2, "saturation": 5, "luminance": 3}
+  ],
+  "curves": [
+    {"channel": "rgb", "points": [{"x": 0, "y": 0}, {"x": 64, "y": 54}, {"x": 192, "y": 205}, {"x": 255, "y": 255}]},
+    {"channel": "blue", "points": [{"x": 0, "y": 3}, {"x": 255, "y": 248}]}
+  ],
+  "local_regions": [],
+  "unsupported_operations": [],
+  "confidence": 0.82
+}

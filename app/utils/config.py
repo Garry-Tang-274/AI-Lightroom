@@ -24,6 +24,7 @@ class RuntimeSettings:
     custom_provider_name: str = ""
     custom_supports_vision: bool = True
     custom_supports_structured_output: bool = True
+    jarvisart_mode: str = "mock"
     preview_size: int = 1536
     ai_reinspection: bool = False
     max_vision_calls: int = 2
@@ -45,6 +46,7 @@ class RuntimeSettings:
             self.provider, self.active_model, self.base_url, self.custom_provider_name,
             custom_vision=self.custom_supports_vision,
             custom_structured_output=self.custom_supports_structured_output,
+            local_mode=self.jarvisart_mode,
         )
 
 
@@ -75,6 +77,7 @@ class SettingsManager:
             custom_provider_name=str(self.store.value("ai/custom_provider_name", "")),
             custom_supports_vision=_as_bool(self.store.value("ai/custom_supports_vision", True)),
             custom_supports_structured_output=_as_bool(self.store.value("ai/custom_supports_structured_output", True)),
+            jarvisart_mode=str(self.store.value("ai/jarvisart_mode", "mock")),
             preview_size=_bounded_int(self.store.value("performance/preview_size", 1536), 640, 2048, 1536),
             ai_reinspection=_as_bool(self.store.value("ai/reinspection", False)),
             max_vision_calls=_bounded_int(self.store.value("ai/max_vision_calls", 2), 1, 2, 2),
@@ -114,6 +117,7 @@ class SettingsManager:
         self.store.setValue("ai/custom_provider_name", settings.custom_provider_name)
         self.store.setValue("ai/custom_supports_vision", settings.custom_supports_vision)
         self.store.setValue("ai/custom_supports_structured_output", settings.custom_supports_structured_output)
+        self.store.setValue("ai/jarvisart_mode", settings.jarvisart_mode)
         self.store.setValue("performance/preview_size", settings.preview_size)
         self.store.setValue("ai/reinspection", settings.ai_reinspection)
         self.store.setValue("ai/max_vision_calls", settings.max_vision_calls)

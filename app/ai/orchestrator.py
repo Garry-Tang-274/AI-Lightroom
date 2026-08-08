@@ -31,6 +31,7 @@ class AIProcessResult:
     created_masks: list[str]
     provider_name: str
     vision_calls: int
+    unsupported_operations: list[str]
 
     @property
     def final_plan(self) -> EditingPlan:
@@ -72,6 +73,7 @@ class AIOrchestrator:
         changed = execution.changed_fields.copy()
         created = execution.created_masks.copy()
         vision_calls = 1 if use_vision else 0
+        unsupported = list(getattr(self.provider, "last_unsupported_operations", ()))
 
         if (
             plan.needs_reinspection
@@ -94,6 +96,7 @@ class AIOrchestrator:
             changed.extend(second.changed_fields)
             created.extend(second.created_masks)
             vision_calls += 1
+            unsupported.extend(getattr(self.provider, "last_unsupported_operations", ()))
 
         return AIProcessResult(
             state=execution.state,
@@ -102,6 +105,7 @@ class AIOrchestrator:
             created_masks=created,
             provider_name=self.provider.name,
             vision_calls=vision_calls,
+            unsupported_operations=list(dict.fromkeys(unsupported)),
         )
 
     @staticmethod

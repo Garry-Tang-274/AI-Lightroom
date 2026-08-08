@@ -34,4 +34,5 @@ class ProviderConfig:
     base_url: str = ""
     display_name: str = ""
     capabilities: ProviderCapabilities = ProviderCapabilities()
-
+    # Local providers may expose several runtimes without becoming cloud services.
+    local_mode: str = "mock"

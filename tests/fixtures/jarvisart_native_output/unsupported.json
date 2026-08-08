@@ -1,0 +1,17 @@
+{
+  "summary": "仅应用可安全映射的曝光调整。",
+  "reasoning_summary": "未支持的 Lightroom 专用操作会被保留为可见警告。",
+  "global_adjustments": [
+    {"parameter": "Exposure2012", "value": -0.2},
+    {"parameter": "LensBlur", "value": 20},
+    {"parameter": "Temperature", "value": 6500}
+  ],
+  "hsl_adjustments": [],
+  "curves": [],
+  "local_regions": [],
+  "unsupported_operations": [
+    {"operation": "CameraCalibration", "reason": "需要 Lightroom 相机配置文件"},
+    {"operation": "PointColors", "reason": "当前本地渲染器未实现 Point Color"}
+  ],
+  "confidence": 0.7
+}

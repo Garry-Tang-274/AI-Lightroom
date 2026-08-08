@@ -1,0 +1,14 @@
+{
+  "summary": "道路压深，天空控制高光，并保护车辆。",
+  "reasoning_summary": "使用真实语义区域请求，避免全局误伤。",
+  "global_adjustments": [{"parameter": "Contrast2012", "value": 9}],
+  "hsl_adjustments": [],
+  "curves": [],
+  "local_regions": [
+    {"mask": {"ref": "sky_1", "name": "Sky", "type": "sky"}, "adjustments": [{"parameter": "LocalExposure2012", "value": -0.3}, {"parameter": "LocalHighlights2012", "value": -22}]},
+    {"mask": {"ref": "road_1", "name": "Road", "type": "semantic", "semantic_label": "road"}, "adjustments": [{"parameter": "LocalExposure2012", "value": -0.28}, {"parameter": "LocalClarity2012", "value": 13}]},
+    {"mask": {"ref": "vehicle_1", "name": "Vehicle", "type": "semantic", "semantic_label": "vehicle"}, "adjustments": [{"parameter": "LocalWhites2012", "value": 8}, {"parameter": "LocalTexture", "value": 5}]}
+  ],
+  "unsupported_operations": [],
+  "confidence": 0.84
+}
