@@ -12,6 +12,7 @@ htmlcov/
 build/
 dist/
 release/
+external/
 *.spec.tmp
 cache/
 models/
