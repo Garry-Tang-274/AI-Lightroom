@@ -58,10 +58,11 @@ def test_local_regions_map_to_real_masks_and_only_affect_their_layers():
 
 def test_unsupported_native_operations_are_never_silently_dropped():
     result = JarvisArtAdapter().adapt(native_fixture("unsupported.json"))
-    assert [(item.tool, item.value) for item in result.plan.global_adjustments] == [("set_exposure", -0.2)]
+    assert [(item.tool, item.value) for item in result.plan.global_adjustments] == [
+        ("set_exposure", -0.2), ("set_temperature", 40.0),
+    ]
     assert any("LensBlur" in message for message in result.unsupported_operations)
     assert any("CameraCalibration" in message for message in result.unsupported_operations)
-    assert any("Temperature" in message for message in result.unsupported_operations)
 
 
 def test_native_fixture_rejects_unknown_fields_instead_of_guessing():
@@ -139,6 +140,48 @@ def test_real_jarvisart_lua_is_parsed_into_supported_parameters_and_visible_unsu
     assert [(item.tool, item.value) for item in result.plan.global_adjustments] == [("set_exposure", -0.35), ("set_contrast", 12.0)]
     assert result.plan.hsl_adjustments[0].color == HSLColor.BLUE
     assert any("LensBlur" in item for item in result.unsupported_operations)
+
+
+def test_complete_develop_table_maps_detail_effects_optics_geometry_calibration_and_curves():
+    native = parse_jarvisart_lua(
+        """return {
+            ProcessVersion = \"15.4\", WhiteBalance = \"Custom\", Temperature = 5000, Tint = 8,
+            Exposure2012 = -0.25, Sharpness = 46, SharpenRadius = 1.3, SharpenDetail = 42,
+            SharpenEdgeMasking = 18, LuminanceSmoothing = 21, LuminanceNoiseReductionDetail = 55,
+            ColorNoiseReduction = 18, ColorNoiseReductionDetail = 48, ColorNoiseReductionSmoothness = 62,
+            PostCropVignetteAmount = -17, PostCropVignetteMidpoint = 44, PostCropVignetteRoundness = -15,
+            PostCropVignetteFeather = 71, PostCropVignetteHighlightContrast = 25,
+            GrainAmount = 18, GrainSize = 31, GrainFrequency = 57,
+            DefringePurpleAmount = 20, DefringePurpleHueLo = 25, DefringePurpleHueHi = 75,
+            PerspectiveVertical = 4, PerspectiveHorizontal = -3, PerspectiveRotate = 1.5, PerspectiveScale = 104,
+            PerspectiveX = 2, PerspectiveY = -1, PerspectiveAspect = 3,
+            RedHue = 5, BlueSaturation = -7, ColorGradeShadowHue = 205, ColorGradeShadowSat = 14,
+            ColorGradeBlending = 62, ColorGradeBalance = -9,
+            SplitToningHighlightHue = 42, SplitToningHighlightSaturation = 11, SplitToningBalance = -4,
+            PostCropVignetteStyle = 1, CurveRefineSaturation = -6,
+            ToneCurvePV2012 = { 0, 0, 64, 51, 192, 208, 255, 255 },
+            HasSettings = true
+        }"""
+    )
+    adapted = JarvisArtAdapter().adapt(native)
+    assert not adapted.unsupported_operations
+    state = apply_editing_plan(EditorState(), adapted.plan).state
+    assert state.basic.temperature == pytest.approx(-20)
+    assert state.detail.sharpen_radius == pytest.approx(1.3)
+    assert state.detail.color_noise_reduction_smoothness == 62
+    assert state.effects.grain_amount == 18
+    assert state.optics.defringe_purple_amount == 20
+    assert state.transform.scale == 104
+    assert state.calibration.red_primary_hue == 5
+    assert state.color_grading.shadows.hue == 205
+    assert state.color_grading.highlights.hue == 42
+    assert state.effects.vignette_style == 1
+    assert state.effects.curve_refine_saturation == -6
+    assert state.curves.rgb.points[1].x == pytest.approx(64 / 255)
+    pixels = np.full((48, 80, 3), 128, dtype=np.uint8)
+    rendered = render_image(pixels, state)
+    assert not np.array_equal(rendered, pixels)
+    assert np.array_equal(rendered, render_image(pixels, state))
 
 
 def test_local_gguf_runtime_posts_the_preview_to_the_local_bridge_and_parses_lua(monkeypatch):

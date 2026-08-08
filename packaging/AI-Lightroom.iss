@@ -2,7 +2,7 @@
 ; Windows credentials, local model weights, or provider caches.
 #define MyAppName "AI Lightroom"
 #ifndef MyAppVersion
-  #define MyAppVersion "1.0.2"
+  #define MyAppVersion "1.0.3"
 #endif
 #define MyAppPublisher "AI Lightroom"
 #define MyAppExeName "AI Lightroom.exe"

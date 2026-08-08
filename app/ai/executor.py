@@ -14,21 +14,70 @@ from app.core.editor_state import (
 
 
 GLOBAL_FIELD_MAP = {
-    "set_exposure": "exposure",
-    "set_contrast": "contrast",
-    "set_highlights": "highlights",
-    "set_shadows": "shadows",
-    "set_whites": "whites",
-    "set_blacks": "blacks",
-    "set_temperature": "temperature",
-    "set_tint": "tint",
-    "set_saturation": "saturation",
-    "set_vibrance": "vibrance",
-    "set_clarity": "clarity",
-    "set_texture": "texture",
-    "set_dehaze": "dehaze",
-    "set_sharpen": "sharpen",
-    "set_vignette": "vignette",
+    "set_exposure": ("basic", "exposure"),
+    "set_contrast": ("basic", "contrast"),
+    "set_highlights": ("basic", "highlights"),
+    "set_shadows": ("basic", "shadows"),
+    "set_whites": ("basic", "whites"),
+    "set_blacks": ("basic", "blacks"),
+    "set_temperature": ("basic", "temperature"),
+    "set_tint": ("basic", "tint"),
+    "set_saturation": ("basic", "saturation"),
+    "set_vibrance": ("basic", "vibrance"),
+    "set_clarity": ("basic", "clarity"),
+    "set_texture": ("basic", "texture"),
+    "set_dehaze": ("basic", "dehaze"),
+    "set_sharpen": ("basic", "sharpen"),
+    "set_vignette": ("basic", "vignette"),
+    "set_sharpen_radius": ("detail", "sharpen_radius"),
+    "set_sharpen_detail": ("detail", "sharpen_detail"),
+    "set_sharpen_masking": ("detail", "sharpen_masking"),
+    "set_luminance_noise_reduction": ("detail", "luminance_noise_reduction"),
+    "set_luminance_noise_reduction_detail": ("detail", "luminance_noise_reduction_detail"),
+    "set_luminance_noise_reduction_contrast": ("detail", "luminance_noise_reduction_contrast"),
+    "set_color_noise_reduction": ("detail", "color_noise_reduction"),
+    "set_color_noise_reduction_detail": ("detail", "color_noise_reduction_detail"),
+    "set_color_noise_reduction_smoothness": ("detail", "color_noise_reduction_smoothness"),
+    "set_vignette_midpoint": ("effects", "vignette_midpoint"),
+    "set_vignette_roundness": ("effects", "vignette_roundness"),
+    "set_vignette_feather": ("effects", "vignette_feather"),
+    "set_vignette_highlights": ("effects", "vignette_highlights"),
+    "set_vignette_style": ("effects", "vignette_style"),
+    "set_curve_refine_saturation": ("effects", "curve_refine_saturation"),
+    "set_grain_amount": ("effects", "grain_amount"),
+    "set_grain_size": ("effects", "grain_size"),
+    "set_grain_roughness": ("effects", "grain_roughness"),
+    "set_remove_chromatic_aberration": ("optics", "remove_chromatic_aberration"),
+    "set_defringe_purple_amount": ("optics", "defringe_purple_amount"),
+    "set_defringe_purple_hue_low": ("optics", "defringe_purple_hue_low"),
+    "set_defringe_purple_hue_high": ("optics", "defringe_purple_hue_high"),
+    "set_defringe_green_amount": ("optics", "defringe_green_amount"),
+    "set_defringe_green_hue_low": ("optics", "defringe_green_hue_low"),
+    "set_defringe_green_hue_high": ("optics", "defringe_green_hue_high"),
+    "set_transform_vertical": ("transform", "vertical"),
+    "set_transform_horizontal": ("transform", "horizontal"),
+    "set_transform_rotate": ("transform", "rotate"),
+    "set_transform_scale": ("transform", "scale"),
+    "set_transform_offset_x": ("transform", "offset_x"),
+    "set_transform_offset_y": ("transform", "offset_y"),
+    "set_transform_aspect": ("transform", "aspect"),
+    "set_calibration_red_primary_hue": ("calibration", "red_primary_hue"),
+    "set_calibration_red_primary_saturation": ("calibration", "red_primary_saturation"),
+    "set_calibration_green_primary_hue": ("calibration", "green_primary_hue"),
+    "set_calibration_green_primary_saturation": ("calibration", "green_primary_saturation"),
+    "set_calibration_blue_primary_hue": ("calibration", "blue_primary_hue"),
+    "set_calibration_blue_primary_saturation": ("calibration", "blue_primary_saturation"),
+    "set_color_grade_shadow_hue": ("color_grading", "shadows", "hue"),
+    "set_color_grade_shadow_saturation": ("color_grading", "shadows", "saturation"),
+    "set_color_grade_shadow_luminance": ("color_grading", "shadows", "luminance"),
+    "set_color_grade_midtone_hue": ("color_grading", "midtones", "hue"),
+    "set_color_grade_midtone_saturation": ("color_grading", "midtones", "saturation"),
+    "set_color_grade_midtone_luminance": ("color_grading", "midtones", "luminance"),
+    "set_color_grade_highlight_hue": ("color_grading", "highlights", "hue"),
+    "set_color_grade_highlight_saturation": ("color_grading", "highlights", "saturation"),
+    "set_color_grade_highlight_luminance": ("color_grading", "highlights", "luminance"),
+    "set_color_grade_blending": ("color_grading", "blending"),
+    "set_color_grade_balance": ("color_grading", "balance"),
 }
 
 CURVE_FIELD_MAP = {
@@ -63,9 +112,27 @@ def apply_editing_plan(state: EditorState, plan: EditingPlan, selected_mask_id: 
     refs: dict[str, str] = {}
 
     for adjustment in plan.global_adjustments:
-        field = GLOBAL_FIELD_MAP[adjustment.tool]
-        updated.basic = updated.basic.with_value(field, adjustment.value)
-        changed.append(f"全局 {field} = {adjustment.value:+g}")
+        target = GLOBAL_FIELD_MAP[adjustment.tool]
+        section, field, *nested = target
+        if nested:
+            wheel = getattr(updated.color_grading, field)
+            values = wheel.model_dump()
+            values[nested[0]] = adjustment.value
+            setattr(updated.color_grading, field, type(wheel).model_validate(values))
+        elif section == "color_grading":
+            values = updated.color_grading.model_dump()
+            values[field] = adjustment.value
+            updated.color_grading = type(updated.color_grading).model_validate(values)
+        else:
+            values = getattr(updated, section)
+            if field == "remove_chromatic_aberration":
+                value = bool(round(adjustment.value))
+            elif field == "vignette_style":
+                value = int(round(adjustment.value))
+            else:
+                value = adjustment.value
+            setattr(updated, section, values.with_value(field, value))
+        changed.append(f"{section} {field} = {adjustment.value:+g}")
 
     for adjustment in plan.hsl_adjustments:
         updated.hsl[adjustment.color] = HSLAdjustment(
@@ -118,4 +185,3 @@ def _resolve_mask(
         if layer.id == target or layer.name == target:
             return layer
     return None
-

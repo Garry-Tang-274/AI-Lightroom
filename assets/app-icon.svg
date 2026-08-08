@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#17314d"/>
+      <stop offset="1" stop-color="#07131f"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#66e8ff"/>
+      <stop offset="1" stop-color="#8aa7ff"/>
+    </linearGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="20" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <rect x="40" y="40" width="944" height="944" rx="220" fill="url(#bg)"/>
+  <rect x="55" y="55" width="914" height="914" rx="204" fill="none" stroke="#7de9ff" stroke-opacity=".5" stroke-width="14"/>
+  <circle cx="512" cy="512" r="298" fill="none" stroke="#dff9ff" stroke-opacity=".22" stroke-width="48"/>
+  <path d="M512 202c171 0 310 139 310 310 0 18-2 36-5 53L629 456c-26-15-57-15-83 0L358 565c-3-17-5-35-5-53 0-171 139-310 310-310Z" fill="url(#accent)"/>
+  <path d="M817 565c-29 156-165 274-327 274-15 0-30-1-45-4l109-188c15-26 15-57 0-83L445 376c22-10 44-17 67-20 153-20 292 72 325 209Z" fill="#c9f5ff" fill-opacity=".94"/>
+  <path d="M445 835c-143-31-250-157-250-323 0-18 2-36 5-53l188 109c26 15 57 15 83 0l188-109c3 17 5 35 5 53 0 171-139 310-310 323Z" fill="url(#accent)"/>
+  <path d="M200 459c29-156 165-274 327-274 15 0 30 1 45 4L463 377c-15 26-15 57 0 83l109 188c-22 10-44 17-67 20-153 20-292-72-325-209Z" fill="#e8fdff"/>
+  <circle cx="512" cy="512" r="116" fill="#0c1f31" stroke="#f3feff" stroke-width="26"/>
+  <circle cx="512" cy="512" r="72" fill="url(#accent)" filter="url(#glow)"/>
+</svg>

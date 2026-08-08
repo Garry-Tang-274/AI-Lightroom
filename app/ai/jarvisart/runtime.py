@@ -115,6 +115,8 @@ class LocalJarvisArtRuntime(JarvisArtRuntime):
 
 
 def parse_jarvisart_lua(lua: str) -> JarvisArtNativePlan:
+    return _parse_complete_jarvisart_lua(lua)
+
     """Parse the scalar Lightroom Lua returned by the existing local bridge.
 
     This deliberately accepts only a compact safe subset. Unknown Lightroom
@@ -149,6 +151,153 @@ def parse_jarvisart_lua(lua: str) -> JarvisArtNativePlan:
         "hsl_adjustments": [{"color": color, **values} for color, values in hsl.items()],
         "curves": [], "local_regions": [], "unsupported_operations": unsupported, "confidence": 0.78,
     })
+
+
+def _parse_complete_jarvisart_lua(lua: str) -> JarvisArtNativePlan:
+    """Read the full top-level Lightroom table without evaluating Lua."""
+    assignments = _top_level_lua_assignments(lua.removeprefix("return").strip())
+    if not assignments:
+        raise AIRequestError(
+            "JarvisArt 原生输出无效",
+            "本地 JarvisArt GGUF 服务没有返回可解析的 Lightroom 参数。",
+            provider="JarvisArt Local GGUF",
+            model="qwen2_vl",
+        )
+    hsl: dict[str, dict[str, float]] = {}
+    global_adjustments: list[dict[str, object]] = []
+    unsupported: list[dict[str, str]] = []
+    curves: list[dict[str, object]] = []
+    curve_channels = {
+        "ToneCurvePV2012": "rgb",
+        "ToneCurvePV2012Red": "red",
+        "ToneCurvePV2012Green": "green",
+        "ToneCurvePV2012Blue": "blue",
+    }
+    for parameter, raw_value in assignments.items():
+        if parameter in curve_channels:
+            points = _tone_curve_points(raw_value)
+            if points:
+                curves.append({"channel": curve_channels[parameter], "points": points})
+            continue
+        value = _lua_number(raw_value)
+        if value is None:
+            if parameter in {"LensProfileSetup", "LensProfileName", "CameraProfile"}:
+                unsupported.append({"operation": parameter, "reason": "需要 Lightroom 专有镜头或相机配置文件"})
+            continue
+        match = re.fullmatch(r"(Hue|Saturation|Luminance)Adjustment(Red|Orange|Yellow|Green|Aqua|Blue|Purple|Magenta)", parameter)
+        if match:
+            field = {"Hue": "hue", "Saturation": "saturation", "Luminance": "luminance"}[match.group(1)]
+            hsl.setdefault(match.group(2).lower(), {})[field] = value
+        else:
+            global_adjustments.append({"parameter": parameter, "value": value})
+    return JarvisArtNativePlan.model_validate({
+        "summary": "JarvisArt 已生成本地 Lightroom 调整方案。",
+        "reasoning_summary": "已将 JarvisArt 返回的完整 Lightroom Develop 参数映射到当前编辑器。",
+        "global_adjustments": global_adjustments,
+        "hsl_adjustments": [{"color": color, **values} for color, values in hsl.items()],
+        "curves": curves,
+        "local_regions": [],
+        "unsupported_operations": unsupported,
+        "confidence": 0.78,
+    })
+
+
+def _top_level_lua_assignments(source: str) -> dict[str, str]:
+    """Read only root key/value pairs; never execute Lua content."""
+    begin = source.find("{")
+    if begin < 0:
+        return {}
+    values: dict[str, str] = {}
+    index = begin + 1
+    size = len(source)
+    while index < size:
+        while index < size and (source[index].isspace() or source[index] == ","):
+            index += 1
+        if index >= size or source[index] == "}":
+            break
+        if source[index] == "[":
+            closing = source.find("]", index + 1)
+            if closing < 0:
+                break
+            key = source[index + 1:closing].strip().strip("'\"")
+            index = closing + 1
+        else:
+            match = re.match(r"[A-Za-z_][A-Za-z0-9_]*", source[index:])
+            if match is None:
+                index += 1
+                continue
+            key = match.group(0)
+            index += len(key)
+        while index < size and source[index].isspace():
+            index += 1
+        if index >= size or source[index] != "=":
+            while index < size and source[index] not in ",}":
+                index += 1
+            continue
+        index += 1
+        while index < size and source[index].isspace():
+            index += 1
+        start = index
+        if index < size and source[index] == "{":
+            depth = 0
+            quote: str | None = None
+            escaped = False
+            while index < size:
+                character = source[index]
+                if quote:
+                    if escaped:
+                        escaped = False
+                    elif character == "\\":
+                        escaped = True
+                    elif character == quote:
+                        quote = None
+                elif character in "'\"":
+                    quote = character
+                elif character == "{":
+                    depth += 1
+                elif character == "}":
+                    depth -= 1
+                    if depth == 0:
+                        index += 1
+                        break
+                index += 1
+        elif index < size and source[index] in "'\"":
+            quote = source[index]
+            index += 1
+            while index < size:
+                if source[index] == quote and source[index - 1] != "\\":
+                    index += 1
+                    break
+                index += 1
+        else:
+            while index < size and source[index] not in ",}":
+                index += 1
+        values[key] = source[start:index].strip()
+    return values
+
+
+def _lua_number(raw_value: str) -> float | None:
+    value = raw_value.strip()
+    if re.fullmatch(r"-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?", value):
+        return float(value)
+    if value == "true":
+        return 1.0
+    if value == "false":
+        return 0.0
+    return None
+
+
+def _tone_curve_points(raw_value: str) -> list[dict[str, float]]:
+    indexed = re.findall(r"\[\s*(-?\d+(?:\.\d+)?)\s*\]\s*=\s*(-?\d+(?:\.\d+)?)", raw_value)
+    if indexed:
+        pairs = [(float(x), float(y)) for x, y in indexed]
+    else:
+        numbers = [float(value) for value in re.findall(r"-?\d+(?:\.\d+)?", raw_value)]
+        pairs = list(zip(numbers[::2], numbers[1::2]))
+    pairs = [(max(0.0, min(255.0, x)), max(0.0, min(255.0, y))) for x, y in pairs]
+    if len(pairs) < 2:
+        return []
+    return [{"x": x, "y": y} for x, y in pairs]
 
 
 class MockJarvisArtRuntime(JarvisArtRuntime):

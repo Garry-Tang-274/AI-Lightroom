@@ -23,6 +23,55 @@ GlobalTool = Literal[
     "set_dehaze",
     "set_sharpen",
     "set_vignette",
+    "set_sharpen_radius",
+    "set_sharpen_detail",
+    "set_sharpen_masking",
+    "set_luminance_noise_reduction",
+    "set_luminance_noise_reduction_detail",
+    "set_luminance_noise_reduction_contrast",
+    "set_color_noise_reduction",
+    "set_color_noise_reduction_detail",
+    "set_color_noise_reduction_smoothness",
+    "set_vignette_midpoint",
+    "set_vignette_roundness",
+    "set_vignette_feather",
+    "set_vignette_highlights",
+    "set_vignette_style",
+    "set_curve_refine_saturation",
+    "set_grain_amount",
+    "set_grain_size",
+    "set_grain_roughness",
+    "set_remove_chromatic_aberration",
+    "set_defringe_purple_amount",
+    "set_defringe_purple_hue_low",
+    "set_defringe_purple_hue_high",
+    "set_defringe_green_amount",
+    "set_defringe_green_hue_low",
+    "set_defringe_green_hue_high",
+    "set_transform_vertical",
+    "set_transform_horizontal",
+    "set_transform_rotate",
+    "set_transform_scale",
+    "set_transform_offset_x",
+    "set_transform_offset_y",
+    "set_transform_aspect",
+    "set_calibration_red_primary_hue",
+    "set_calibration_red_primary_saturation",
+    "set_calibration_green_primary_hue",
+    "set_calibration_green_primary_saturation",
+    "set_calibration_blue_primary_hue",
+    "set_calibration_blue_primary_saturation",
+    "set_color_grade_shadow_hue",
+    "set_color_grade_shadow_saturation",
+    "set_color_grade_shadow_luminance",
+    "set_color_grade_midtone_hue",
+    "set_color_grade_midtone_saturation",
+    "set_color_grade_midtone_luminance",
+    "set_color_grade_highlight_hue",
+    "set_color_grade_highlight_saturation",
+    "set_color_grade_highlight_luminance",
+    "set_color_grade_blending",
+    "set_color_grade_balance",
 ]
 
 CurveTool = Literal["set_rgb_curve", "set_red_curve", "set_green_curve", "set_blue_curve"]
@@ -50,9 +99,35 @@ class GlobalAdjustment(StrictModel):
     def validate_value(self) -> "GlobalAdjustment":
         if self.tool == "set_exposure" and not -5 <= self.value <= 5:
             raise ValueError("exposure must be between -5 and 5")
-        if self.tool == "set_sharpen" and not 0 <= self.value <= 100:
-            raise ValueError("sharpen must be between 0 and 100")
-        if self.tool not in {"set_exposure", "set_sharpen"} and not -100 <= self.value <= 100:
+        if self.tool == "set_sharpen_radius" and not 0.3 <= self.value <= 3:
+            raise ValueError("sharpen radius must be between 0.3 and 3")
+        if self.tool == "set_transform_scale" and not 50 <= self.value <= 150:
+            raise ValueError("transform scale must be between 50 and 150")
+        if self.tool == "set_transform_rotate" and not -45 <= self.value <= 45:
+            raise ValueError("transform rotate must be between -45 and 45")
+        if self.tool == "set_vignette_style" and not 0 <= self.value <= 3:
+            raise ValueError("vignette style must be between 0 and 3")
+        non_negative = {
+            "set_sharpen", "set_sharpen_detail", "set_sharpen_masking",
+            "set_luminance_noise_reduction", "set_luminance_noise_reduction_detail",
+            "set_luminance_noise_reduction_contrast", "set_color_noise_reduction",
+            "set_color_noise_reduction_detail", "set_color_noise_reduction_smoothness",
+            "set_vignette_midpoint", "set_vignette_feather", "set_vignette_highlights",
+            "set_grain_amount", "set_grain_size", "set_grain_roughness",
+            "set_remove_chromatic_aberration", "set_defringe_purple_amount",
+            "set_defringe_purple_hue_low", "set_defringe_purple_hue_high",
+            "set_defringe_green_amount", "set_defringe_green_hue_low", "set_defringe_green_hue_high",
+            "set_color_grade_shadow_saturation", "set_color_grade_midtone_saturation",
+            "set_color_grade_highlight_saturation", "set_color_grade_blending",
+        }
+        hue_values = {
+            "set_color_grade_shadow_hue", "set_color_grade_midtone_hue", "set_color_grade_highlight_hue",
+        }
+        if self.tool in non_negative and not 0 <= self.value <= 100:
+            raise ValueError(f"{self.tool} must be between 0 and 100")
+        if self.tool in hue_values and not 0 <= self.value <= 360:
+            raise ValueError(f"{self.tool} must be between 0 and 360")
+        if self.tool not in {"set_exposure", "set_sharpen_radius", "set_transform_scale", "set_transform_rotate", "set_vignette_style", *non_negative, *hue_values} and not -100 <= self.value <= 100:
             raise ValueError(f"{self.tool} must be between -100 and 100")
         return self
 

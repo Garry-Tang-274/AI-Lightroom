@@ -37,10 +37,13 @@ class JarvisArtAdapter:
         globals_: list[GlobalAdjustment] = []
         for item in native.global_adjustments:
             support = operation_support(item.parameter)
-            if not support.supported or not support.target:
+            if not support.supported:
                 unsupported.append(f"{item.parameter}: {support.reason}")
                 continue
-            globals_.append(GlobalAdjustment(tool=support.target, value=item.value))
+            if support.target is None:
+                continue
+            value = _adapt_native_value(item.parameter, item.value)
+            globals_.append(GlobalAdjustment(tool=support.target, value=value))
         hsl = [HSLAdjustmentPlan(color=item.color, hue=item.hue, saturation=item.saturation, luminance=item.luminance) for item in native.hsl_adjustments]
         curves = [CurveAdjustmentPlan(tool=_CURVE_TOOL[item.channel], points=[CurvePoint(x=point.x / 255, y=point.y / 255) for point in item.points]) for item in native.curves]
         masks: list[MaskRequest] = []
@@ -70,3 +73,14 @@ class JarvisArtAdapter:
             ),
             tuple(dict.fromkeys(unsupported)),
         )
+
+
+def _adapt_native_value(parameter: str, value: float) -> float:
+    """Convert native Lightroom units only where the application uses another unit."""
+    if parameter == "Temperature":
+        # Lightroom supplies Kelvin while the editor's established manual
+        # control is a relative -100..100 temperature shift around daylight.
+        return max(-100.0, min(100.0, (value - 5500.0) / 25.0))
+    if parameter == "Tint":
+        return max(-100.0, min(100.0, value))
+    return value

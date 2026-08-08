@@ -56,7 +56,7 @@ from app.core.masks import generate_mask, mask_confidence
 from app.utils.logging_setup import configure_logging
 
 
-APP_VERSION = "1.0.2"
+APP_VERSION = "1.0.3"
 
 
 class MainWindow(QMainWindow):
@@ -241,6 +241,7 @@ class MainWindow(QMainWindow):
         self.adjustments.hsl_changed.connect(self._set_hsl_adjustment)
         self.adjustments.curve_changed.connect(self._set_curve)
         self.adjustments.color_grading_changed.connect(self._set_color_grading)
+        self.adjustments.advanced_adjustment_changed.connect(self._set_advanced_adjustment)
         self.adjustments.reset_requested.connect(self.reset_edits)
         self.adjustments.interaction_started.connect(self._begin_interaction)
         self.adjustments.interaction_finished.connect(self._finish_interaction)
@@ -483,6 +484,17 @@ class MainWindow(QMainWindow):
         setattr(self.state.color_grading, region, ColorWheel.model_validate(target))
         self._queue_preview_render()
         self._schedule_history("调整色彩分级")
+
+    def _set_advanced_adjustment(self, section: str, key: str, value) -> None:
+        if self.preview_source is None:
+            return
+        try:
+            values = getattr(self.state, section)
+            setattr(self.state, section, values.with_value(key, value))
+        except (AttributeError, KeyError, ValueError):
+            return
+        self._queue_preview_render()
+        self._schedule_history(f"调整{section}")
 
     def _queue_preview_render(self) -> None:
         self._render_generation += 1
@@ -886,8 +898,14 @@ class MainWindow(QMainWindow):
             "basic": self.state.basic.model_dump(mode="json"),
             "hsl": {key.value: value.model_dump(mode="json") for key, value in self.state.hsl.items()},
             "curves": self.state.curves.model_dump(mode="json"),
+            "color_grading": self.state.color_grading.model_dump(mode="json"),
+            "detail": self.state.detail.model_dump(mode="json"),
+            "effects": self.state.effects.model_dump(mode="json"),
+            "optics": self.state.optics.model_dump(mode="json"),
+            "transform": self.state.transform.model_dump(mode="json"),
+            "calibration": self.state.calibration.model_dump(mode="json"),
         }
-        self.statusBar().showMessage("已复制全局、HSL 和曲线调整（不含蒙版和水印）", 5000)
+        self.statusBar().showMessage("已复制全局、细节、效果、光学、几何、校准、HSL 和曲线调整（不含蒙版和水印）", 5000)
 
     def paste_adjustments(self) -> None:
         if self.preview_source is None or not self._adjustment_clipboard:

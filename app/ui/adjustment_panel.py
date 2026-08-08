@@ -48,6 +48,57 @@ BASIC_SPECS = (
     SliderSpec("vignette", "暗角", -100, 100),
 )
 
+DETAIL_SPECS = (
+    SliderSpec("sharpen_radius", "锐化半径", 30, 300, 100),
+    SliderSpec("sharpen_detail", "锐化细节", 0, 100),
+    SliderSpec("sharpen_masking", "锐化蒙版", 0, 100),
+    SliderSpec("luminance_noise_reduction", "明度降噪", 0, 100),
+    SliderSpec("luminance_noise_reduction_detail", "明度细节", 0, 100),
+    SliderSpec("luminance_noise_reduction_contrast", "明度对比", 0, 100),
+    SliderSpec("color_noise_reduction", "颜色降噪", 0, 100),
+    SliderSpec("color_noise_reduction_detail", "颜色细节", 0, 100),
+    SliderSpec("color_noise_reduction_smoothness", "颜色平滑度", 0, 100),
+)
+
+EFFECTS_SPECS = (
+    SliderSpec("vignette_midpoint", "暗角中点", 0, 100),
+    SliderSpec("vignette_roundness", "暗角圆度", -100, 100),
+    SliderSpec("vignette_feather", "暗角羽化", 0, 100),
+    SliderSpec("vignette_highlights", "暗角高光", 0, 100),
+    SliderSpec("curve_refine_saturation", "曲线后饱和度", -100, 100),
+    SliderSpec("grain_amount", "颗粒数量", 0, 100),
+    SliderSpec("grain_size", "颗粒大小", 0, 100),
+    SliderSpec("grain_roughness", "颗粒粗糙度", 0, 100),
+)
+
+OPTICS_SPECS = (
+    SliderSpec("defringe_purple_amount", "紫边校正", 0, 100),
+    SliderSpec("defringe_purple_hue_low", "紫边色相下限", 0, 100),
+    SliderSpec("defringe_purple_hue_high", "紫边色相上限", 0, 100),
+    SliderSpec("defringe_green_amount", "绿边校正", 0, 100),
+    SliderSpec("defringe_green_hue_low", "绿边色相下限", 0, 100),
+    SliderSpec("defringe_green_hue_high", "绿边色相上限", 0, 100),
+)
+
+TRANSFORM_SPECS = (
+    SliderSpec("vertical", "垂直", -100, 100),
+    SliderSpec("horizontal", "水平", -100, 100),
+    SliderSpec("rotate", "旋转", -4500, 4500, 100),
+    SliderSpec("scale", "缩放", 50, 150),
+    SliderSpec("offset_x", "水平偏移", -100, 100),
+    SliderSpec("offset_y", "垂直偏移", -100, 100),
+    SliderSpec("aspect", "宽高比", -100, 100),
+)
+
+CALIBRATION_SPECS = (
+    SliderSpec("red_primary_hue", "红原色色相", -100, 100),
+    SliderSpec("red_primary_saturation", "红原色饱和度", -100, 100),
+    SliderSpec("green_primary_hue", "绿原色色相", -100, 100),
+    SliderSpec("green_primary_saturation", "绿原色饱和度", -100, 100),
+    SliderSpec("blue_primary_hue", "蓝原色色相", -100, 100),
+    SliderSpec("blue_primary_saturation", "蓝原色饱和度", -100, 100),
+)
+
 
 class NoWheelSlider(QSlider):
     """Keep the editor scroll wheel for the surrounding panel, never values."""
@@ -124,6 +175,7 @@ class AdjustmentPanel(QScrollArea):
     hsl_changed = Signal(str, str, float)
     curve_changed = Signal(str, object)
     color_grading_changed = Signal(str, str, float)
+    advanced_adjustment_changed = Signal(str, str, object)
     reset_requested = Signal()
     interaction_started = Signal(str)
     interaction_finished = Signal(str)
@@ -219,6 +271,36 @@ class AdjustmentPanel(QScrollArea):
         self.grading_selector.currentIndexChanged.connect(self._show_selected_grading)
         layout.addWidget(grading_group)
 
+        self.advanced_controls: dict[str, dict[str, ParameterSlider]] = {}
+        self._add_advanced_group(layout, "细节", "detail", DETAIL_SPECS)
+        effects_group = QGroupBox("效果")
+        effects_layout = QVBoxLayout(effects_group)
+        self._add_advanced_controls(effects_layout, "effects", EFFECTS_SPECS)
+        self.vignette_style = QComboBox()
+        self.vignette_style.addItem("暗角样式：绘制叠加", 0)
+        self.vignette_style.addItem("暗角样式：高光优先", 1)
+        self.vignette_style.addItem("暗角样式：颜色优先", 2)
+        self.vignette_style.addItem("暗角样式：保留", 3)
+        self.vignette_style.currentIndexChanged.connect(
+            lambda _index: self.advanced_adjustment_changed.emit("effects", "vignette_style", self.vignette_style.currentData())
+        )
+        effects_layout.addWidget(self.vignette_style)
+        layout.addWidget(effects_group)
+
+        optics_group = QGroupBox("光学")
+        optics_layout = QVBoxLayout(optics_group)
+        from PySide6.QtWidgets import QCheckBox
+        self.remove_chromatic_aberration = QCheckBox("移除色差")
+        self.remove_chromatic_aberration.toggled.connect(
+            lambda checked: self.advanced_adjustment_changed.emit("optics", "remove_chromatic_aberration", checked)
+        )
+        optics_layout.addWidget(self.remove_chromatic_aberration)
+        self._add_advanced_controls(optics_layout, "optics", OPTICS_SPECS)
+        layout.addWidget(optics_group)
+
+        self._add_advanced_group(layout, "几何", "transform", TRANSFORM_SPECS)
+        self._add_advanced_group(layout, "相机校准", "calibration", CALIBRATION_SPECS)
+
         masks_placeholder = QGroupBox("局部调整")
         masks_layout = QFormLayout(masks_placeholder)
         muted = QLabel("渐变、范围和智能蒙版")
@@ -237,8 +319,40 @@ class AdjustmentPanel(QScrollArea):
         for key, control in self.controls.items():
             control.set_value(getattr(state.basic, key))
         self.curve_panel.set_state(state)
+        for section, controls in self.advanced_controls.items():
+            values = getattr(state, section)
+            for key, control in controls.items():
+                control.set_value(getattr(values, key))
+        self.remove_chromatic_aberration.blockSignals(True)
+        self.remove_chromatic_aberration.setChecked(state.optics.remove_chromatic_aberration)
+        self.remove_chromatic_aberration.blockSignals(False)
+        self.vignette_style.blockSignals(True)
+        self.vignette_style.setCurrentIndex(max(0, self.vignette_style.findData(state.effects.vignette_style)))
+        self.vignette_style.blockSignals(False)
         self._show_selected_hsl()
         self._show_selected_grading()
+
+    def _add_advanced_group(self, parent: QVBoxLayout, title: str, section: str, specs: tuple[SliderSpec, ...]) -> None:
+        group = QGroupBox(title)
+        group_layout = QVBoxLayout(group)
+        self._add_advanced_controls(group_layout, section, specs)
+        parent.addWidget(group)
+
+    def _add_advanced_controls(self, layout: QVBoxLayout, section: str, specs: tuple[SliderSpec, ...]) -> None:
+        controls = self.advanced_controls.setdefault(section, {})
+        for spec in specs:
+            control = ParameterSlider(spec)
+            control.value_changed.connect(
+                lambda key, value, section_name=section: self.advanced_adjustment_changed.emit(section_name, key, value)
+            )
+            control.interaction_started.connect(
+                lambda _key, title=section: self.interaction_started.emit(f"调整{title}")
+            )
+            control.interaction_finished.connect(
+                lambda _key, title=section: self.interaction_finished.emit(f"调整{title}")
+            )
+            controls[spec.key] = control
+            layout.addWidget(control)
 
     def _show_selected_hsl(self) -> None:
         color = HSLColor(self.hsl_selector.currentData())
