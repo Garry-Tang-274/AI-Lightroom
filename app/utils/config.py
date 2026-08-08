@@ -4,13 +4,13 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-import keyring
 from dotenv import find_dotenv, load_dotenv
 from PySide6.QtCore import QSettings
 
+from app.utils.secure_store import WindowsCredentialStore
 
-KEYRING_SERVICE = "AI Lightroom"
-KEYRING_ACCOUNT = "gemini_api_key"
+
+CREDENTIAL_TARGET = "AI Lightroom/Gemini API Key"
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,6 +34,7 @@ class SettingsManager:
         if dotenv_path:
             load_dotenv(dotenv_path, override=False)
         self.store = QSettings("AI Lightroom", "AI Lightroom")
+        self.credentials = WindowsCredentialStore(CREDENTIAL_TARGET) if os.name == "nt" else None
 
     def runtime(self) -> RuntimeSettings:
         model = os.getenv("GEMINI_MODEL") or self.store.value("ai/gemini_model", "gemini-3.6-flash")
@@ -51,9 +52,11 @@ class SettingsManager:
         environment_key = os.getenv("GEMINI_API_KEY", "").strip()
         if environment_key:
             return environment_key
+        if self.credentials is None:
+            return ""
         try:
-            return (keyring.get_password(KEYRING_SERVICE, KEYRING_ACCOUNT) or "").strip()
-        except keyring.errors.KeyringError:
+            return self.credentials.get().strip()
+        except OSError:
             return ""
 
     def save(self, settings: RuntimeSettings, api_key: str) -> None:
@@ -68,12 +71,10 @@ class SettingsManager:
         if not os.getenv("GEMINI_API_KEY"):
             try:
                 if api_key.strip():
-                    keyring.set_password(KEYRING_SERVICE, KEYRING_ACCOUNT, api_key.strip())
-                else:
-                    existing = keyring.get_password(KEYRING_SERVICE, KEYRING_ACCOUNT)
-                    if existing:
-                        keyring.delete_password(KEYRING_SERVICE, KEYRING_ACCOUNT)
-            except keyring.errors.KeyringError as exc:
+                    self.credentials.set(api_key.strip())
+                elif self.credentials:
+                    self.credentials.delete()
+            except OSError as exc:
                 raise RuntimeError("无法写入 Windows 凭据管理器，请改用 .env 配置 API Key。") from exc
 
 
@@ -88,4 +89,3 @@ def _bounded_int(value, minimum: int, maximum: int, default: int) -> int:
         return max(minimum, min(maximum, int(value)))
     except (TypeError, ValueError):
         return default
-

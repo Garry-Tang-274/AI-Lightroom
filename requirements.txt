@@ -6,7 +6,6 @@ pydantic>=2.8,<3
 python-dotenv>=1.0,<2
 google-genai>=1.0,<2
 platformdirs>=4.2,<5
-keyring>=25,<27
 scipy>=1.14,<2
 psutil>=6,<8
 pytest>=8.2,<10

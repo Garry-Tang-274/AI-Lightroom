@@ -40,7 +40,12 @@ def main() -> int:
         screenshot = sys.argv[index + 1] if index + 1 < len(sys.argv) else "ai-lightroom-smoke.png"
 
         def finish_smoke_test() -> None:
-            success = window.grab().save(screenshot)
+            try:
+                # Exercise the packaged credential backend without exposing a key.
+                window.settings_manager.gemini_api_key()
+                success = window.grab().save(screenshot)
+            except Exception:
+                success = False
             app.exit(0 if success else 2)
 
         QTimer.singleShot(800, finish_smoke_test)

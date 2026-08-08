@@ -12,7 +12,7 @@ a = Analysis(
         (str(root / "assets" / "app.png"), "assets"),
         (str(root / ".env.example"), "."),
     ],
-    hiddenimports=["keyring.backends.Windows"],
+    hiddenimports=[],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -50,4 +50,3 @@ coll = COLLECT(
     upx_exclude=[],
     name="AI Lightroom",
 )
-

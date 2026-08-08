@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from uuid import uuid4
 
 import numpy as np
 import pytest
@@ -13,6 +14,7 @@ from app.core.editor_state import EditorState
 from app.core.masks import generate_mask
 from app.ui.main_window import MainWindow
 from app.utils.io_utils import load_image, make_preview
+from app.utils.secure_store import WindowsCredentialStore
 
 
 def test_consecutive_images_replace_source_and_invalidate_old_render(qtbot, tmp_path):
@@ -69,3 +71,13 @@ def test_mask_engine_rejects_invalid_pixel_input():
 
     with pytest.raises(ValueError, match="RGB uint8"):
         generate_mask(np.zeros((20, 20), dtype=np.uint8), MaskLayer(name="sky", type=MaskType.SKY))
+
+
+def test_windows_credential_store_round_trip():
+    target = f"AI Lightroom/Test/{uuid4()}"
+    store = WindowsCredentialStore(target)
+    try:
+        store.set("temporary-test-secret")
+        assert store.get() == "temporary-test-secret"
+    finally:
+        store.delete()
