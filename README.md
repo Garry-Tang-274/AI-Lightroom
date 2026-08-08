@@ -1,53 +1,70 @@
 # AI Lightroom V0.2
 
-AI Lightroom 是一个 Windows 非破坏式桌面修图应用。传统滑块、HSL、曲线、蒙版和 AI 规划共享同一份 `EditorState`；预览和导出始终从原图与当前状态重新渲染，不会反复烧录处理结果。
+AI Lightroom is a Windows desktop photo editor with non-destructive local rendering and optional AI-assisted color-grading plans. AI analyzes a reduced preview and returns a validated `EditingPlan`; the local renderer applies only the supported deterministic adjustments, curves, HSL, and masks. It does not use generative image redrawing.
 
-## 当前功能
+## Current features
 
-- JPG/PNG 打开、缩放、适配画布、直方图、原图按住对比、Undo/Redo、复制/粘贴调整。
-- 基础调整、8 色 HSL、RGB/分通道曲线、色彩分级、局部蒙版和画笔。
-- 全分辨率 JPG/PNG 导出，保留可用的 EXIF、ICC 和 DPI 元数据。
-- PNG/JPG/WEBP 水印库；水印以非破坏式图层显示在预览和导出中。
-- 自动恢复同一张照片的编辑状态与历史（保存于应用配置，不在照片旁生成文件）。
-- Gemini structured output：严格 `EditingPlan` schema、本地二次 Pydantic 校验、不会以生成式重绘替代像素编辑。
-- 离线 Mock Provider：未配置 Key 时可完整验证 AI → 编辑计划 → 渲染流程。
-- AI 费用保护：默认每天本地上限 20 次、无自动重试、使用记录和可见 Provider 状态。
+- JPG/PNG import, fit/zoom, histogram, before/after, undo/redo, copy/paste adjustments.
+- Basic tone/color controls, HSL, RGB/channel curves, color grading, local masks, brush masks, and non-destructive watermarks.
+- Full-resolution JPG/PNG export with available EXIF, ICC, and DPI metadata.
+- Non-destructive preview/export pipeline: original pixels + `EditorState` + masks/layers → render.
+- Local AI usage guard with no automatic retry and an offline Mock provider.
 
-## 运行
+## AI providers
+
+The application does not provide an API key and never proxies photos or keys through a project-owned server. You select a service and use your own account; cloud services can charge for requests.
+
+Formally supported now:
+
+- Google Gemini
+- OpenAI (high-quality AI mode)
+- Alibaba Cloud Model Studio / DashScope: `qwen3.7-plus`
+- Custom OpenAI-compatible API
+- Offline Mock (no network)
+
+The provider registry declares each adapter's capabilities (vision, structured output, multi-image input, image generation/editing, streaming, and custom Base URL). Future adapters can be registered without changing the color-grading core.
+
+### Configure a provider
+
+Open **File → Settings → AI** and choose a provider.
+
+- **Qwen**: enter your Model Studio API Key. Default model: `qwen3.7-plus`. Default Beijing Base URL: `https://dashscope.aliyuncs.com/compatible-mode/v1`. Replace it with the region/workspace URL shown by your Model Studio console when needed.
+- **Custom / OpenAI-compatible**: enter a provider name, Base URL ending in the compatible API version path (usually `/v1`), API Key, and Model ID. Enable Vision and structured JSON only when the service actually supports them.
+- **Test connection** sends one small, user-initiated text request. It may consume provider quota/cost.
+
+API keys are stored in Windows Credential Manager, separately from normal settings. Environment variables override the credential store. Keys are never committed, logged, embedded in the EXE, or placed in the README.
+
+Example local `.env` values (replace placeholders; do not commit this file):
+
+```dotenv
+GEMINI_API_KEY=YOUR_API_KEY_HERE
+GEMINI_MODEL=gemini-3.6-flash
+OPENAI_API_KEY=YOUR_API_KEY_HERE
+OPENAI_MODEL=gpt-5.6-terra
+DASHSCOPE_API_KEY=YOUR_API_KEY_HERE
+QWEN_MODEL=qwen3.7-plus
+QWEN_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+```
+
+Cloud analysis sends a JPEG preview, capped by the configurable long edge (default 1536 px). Original high-resolution photos stay local and are used only for final export.
+
+## Run
 
 ```powershell
 Set-Location D:\AI-Lightroom
 .\.venv\Scripts\python.exe -m app.main
 ```
 
-AI 输入框支持多行文本：`Enter` 换行，`Ctrl+Enter` 发送。
+AI input accepts multiple lines. Use `Ctrl+Enter` to send; `Enter` creates a new line.
 
-## 配置 AI Provider
-
-默认 Provider 是 Gemini。在“文件 → 设置 → AI”中可选择 Gemini、OpenAI（高质量 AI 模式）或离线 Mock；两个 Key 分别写入 Windows Credential Manager，不会写入项目、日志或 EXE。
-
-OpenAI 模式仅使用 Responses API 的视觉输入和严格 JSON `EditingPlan` 输出，不使用图片生成或编辑接口。默认模型为 `gpt-5.6-terra`，也可在设置中改为你账号可用、支持视觉与 Structured Outputs 的文本模型。
-
-也可创建本地 `.env`：
-
-```dotenv
-GEMINI_API_KEY=your_key_here
-GEMINI_MODEL=gemini-3.6-flash
-OPENAI_API_KEY=your_key_here
-OPENAI_MODEL=gpt-5.6-terra
-```
-
-环境变量优先于设置页。设置页可编辑系统提示词、关闭默认的自动复检，以及配置本地费用上限。免费保护模式的 `20 次/天` 仅是本地安全阈值，不代表 Google 的实时配额。
-
-## 开发与测试
+## Develop and test
 
 ```powershell
 Set-Location D:\AI-Lightroom
-$env:QT_QPA_PLATFORM = 'offscreen'
 .\.venv\Scripts\python.exe -m pytest -q
 ```
 
-## Windows 打包
+## Build for Windows
 
 ```powershell
 Set-Location D:\AI-Lightroom
@@ -55,12 +72,9 @@ Set-Location D:\AI-Lightroom
 & '.\dist\AI Lightroom\AI Lightroom.exe' --smoke-test
 ```
 
-打包输出：`dist\AI Lightroom\AI Lightroom.exe`。API Key、用户照片、水印库和会话数据均不进入 Git 或 EXE。
+## Known limits
 
-## 已知限制
-
-- 当前正式输入为 JPG/PNG；RAW、16-bit 和完整 ICC 工作流尚未实现。
-- 天空/主体/语义蒙版采用轻量本地算法，复杂边缘不等同于大型分割模型。
-- 曲线为分段线性；渲染当前使用 OpenCV/CPU。
-- 水印支持锚点位置、大小、不透明度和边距；直接拖动、旋转与阴影尚未实现。
-- 本地调用计数保守记录已发起的云端请求；它不是 Google 后台账单或额度查询。
+- Input is currently JPG/PNG; RAW and a complete color-managed workflow are not implemented.
+- Local semantic masks are conservative OpenCV-based analysis, not a large segmentation model.
+- The project does not yet implement dedicated Claude, DeepSeek, Doubao, OpenRouter, SiliconFlow, or Ollama adapters. Services that genuinely expose OpenAI-compatible Chat Completions can use Custom mode.
+- Image generation and generative image editing are intentionally not part of the AI color-grading pipeline.

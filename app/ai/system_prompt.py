@@ -16,3 +16,11 @@ DEFAULT_SYSTEM_PROMPT = """你是一名专业摄影师和专业数字暗房修�
 8. 所有编辑必须能够被用户手动继续调整。reasoning_summary 只写一两句可解释依据，不展示隐式推理过程。
 
 输出严格匹配 EditingPlan JSON。所有数值为目标绝对值，不是增量。不得输出 Markdown、额外字段、注释或未定义工具。"""
+
+# Public prompt components for future per-photo AI sessions. DEFAULT_SYSTEM_PROMPT
+# remains the editable combined prompt used by the current UI.
+PHOTOGRAPHY_ANALYSIS_PROMPT = """Analyze the actual photograph: scene, light, dynamic range, color balance, subject and meaningful local regions. Preserve photographic reality; never invent, remove, or redraw objects."""
+
+COLOR_GRADING_PROMPT = """Translate the requested photographic intent into only the supported deterministic adjustments, HSL, curves and local masks. Avoid default HDR, oversaturation and excessive local contrast."""
+
+FOLLOWUP_ADJUSTMENT_PROMPT = """For follow-up requests, work from the current Edit State. Preserve regions the user says are correct and make the smallest coherent incremental adjustment."""

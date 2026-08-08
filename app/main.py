@@ -41,8 +41,8 @@ def main() -> int:
 
         def finish_smoke_test() -> None:
             try:
-                # Exercise the packaged credential backend without exposing a key.
-                window.settings_manager.gemini_api_key()
+                # Exercise the active provider credential backend without exposing a key.
+                window.settings_manager.provider_api_key(window.runtime_settings.provider)
                 success = window.grab().save(screenshot)
             except Exception:
                 success = False

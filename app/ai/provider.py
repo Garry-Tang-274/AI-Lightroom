@@ -3,6 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
+from app.ai.capabilities import ProviderCapabilities
 from app.ai.schemas import EditingPlan
 from app.core.editor_state import EditorState
 
@@ -17,9 +18,20 @@ class PlanningRequest:
 
 
 class AIProvider(ABC):
+    id = "provider"
     name = "AI Provider"
+    capabilities = ProviderCapabilities()
 
     @abstractmethod
     def plan(self, request: PlanningRequest) -> EditingPlan:
         raise NotImplementedError
 
+    def request(self, request: PlanningRequest) -> EditingPlan:
+        return self.plan(request)
+
+    def analyze_image(self, request: PlanningRequest) -> EditingPlan:
+        return self.plan(request)
+
+    def test_connection(self) -> str:
+        """Make one small, explicit user-triggered request and return a safe status."""
+        raise NotImplementedError("This provider does not expose a connection test")

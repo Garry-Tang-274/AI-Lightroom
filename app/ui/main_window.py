@@ -46,6 +46,7 @@ from app.utils.io_utils import LoadedImage, load_image, make_preview
 from app.utils.config import SettingsManager
 from app.ai.errors import AIRequestError
 from app.ai.usage import AIUsageManager
+from app.ai.provider_registry import provider_registry
 from app.core.watermarks import WatermarkLibrary
 from app.core.session_store import SessionStore
 from app.core.masks import generate_mask, mask_confidence
@@ -765,7 +766,18 @@ class MainWindow(QMainWindow):
         self._flush_history()
         self.runtime_settings = self.settings_manager.runtime()
         budget = self.usage_manager.status()
-        use_cloud = self._cloud_provider_configured()
+        provider_config = self.runtime_settings.provider_config
+        provider_descriptor = provider_registry.descriptor(provider_config.provider_id)
+        api_key = self.settings_manager.provider_api_key(provider_config.provider_id)
+        use_cloud = provider_descriptor.requires_api_key and bool(api_key)
+        if provider_descriptor.requires_api_key and not api_key:
+            self.ai_panel.add_assistant_message(f"请先在设置中配置 {provider_descriptor.display_name} 的 API Key；本次未发送请求。")
+            self._refresh_ai_status()
+            return
+        if provider_descriptor.capabilities.supports_custom_base_url and not provider_config.base_url:
+            self.ai_panel.add_assistant_message("请先填写 OpenAI-compatible API 的 Base URL；本次未发送请求。")
+            self._refresh_ai_status()
+            return
         if budget.mode == "disabled" and use_cloud:
             self.ai_panel.add_assistant_message("云端 AI 已在费用保护设置中禁用；本次未发送请求。")
             self._refresh_ai_status()
@@ -781,8 +793,7 @@ class MainWindow(QMainWindow):
             self.state,
             history_summary,
             self.runtime_settings,
-            self.settings_manager.gemini_api_key(),
-            self.settings_manager.openai_api_key(),
+            api_key,
             self.mask_panel.selected_mask_id,
         )
         self._ai_worker = worker
@@ -876,22 +887,17 @@ class MainWindow(QMainWindow):
         budget = self.usage_manager.status()
         if budget.mode == "disabled":
             return "Cloud disabled"
-        if self.runtime_settings.provider == "mock":
-            return "Offline Mock（仅用于测试）"
-        if self.runtime_settings.provider == "openai":
-            if self.settings_manager.openai_api_key():
-                return f"OpenAI 高质量 AI · {self.runtime_settings.openai_model}"
-            return "Offline Mock（未配置 OpenAI API Key）"
-        if self.settings_manager.gemini_api_key():
-            return f"Gemini {self.runtime_settings.gemini_model}"
-        return "Offline Mock（未配置 API Key）"
+        config = self.runtime_settings.provider_config
+        descriptor = provider_registry.descriptor(config.provider_id)
+        if not descriptor.requires_api_key:
+            return descriptor.display_name
+        if self.settings_manager.has_provider_key(config.provider_id):
+            return f"{config.display_name} · {config.model}"
+        return f"未配置 {config.display_name} API Key"
 
     def _cloud_provider_configured(self) -> bool:
-        if self.runtime_settings.provider == "gemini":
-            return bool(self.settings_manager.gemini_api_key())
-        if self.runtime_settings.provider == "openai":
-            return bool(self.settings_manager.openai_api_key())
-        return False
+        descriptor = provider_registry.descriptor(self.runtime_settings.provider)
+        return descriptor.requires_api_key and self.settings_manager.has_provider_key(descriptor.id)
 
     def _refresh_ai_status(self, completed_provider: str | None = None) -> None:
         if completed_provider:

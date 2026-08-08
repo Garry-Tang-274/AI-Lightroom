@@ -85,7 +85,7 @@ def test_budget_limit_blocks_cloud_worker_without_sending(qtbot, tmp_path, monke
     qtbot.addWidget(window)
     window.open_image(str(source))
     monkeypatch.setattr(window.settings_manager, "runtime", lambda: RuntimeSettings(provider="gemini"))
-    monkeypatch.setattr(window.settings_manager, "gemini_api_key", lambda: "configured")
+    monkeypatch.setattr(window.settings_manager, "provider_api_key", lambda _provider_id: "configured")
     monkeypatch.setattr(window.usage_manager, "status", lambda: BudgetStatus("free", 20, 20, 20))
     window._run_ai_edit("轻微调整")
     assert window._ai_worker is None
