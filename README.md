@@ -2,6 +2,10 @@
 
 [简体中文](README_zh-CN.md)
 
+<p align="center">
+  <img src="assets/app.png" width="128" alt="AI Lightroom app icon">
+</p>
+
 AI Lightroom is a Windows desktop photo editor for non-destructive traditional adjustments and optional natural-language AI colour-grading plans. The local renderer applies supported parameters, HSL, curves, masks, and watermarks; it does not redraw or generate a replacement photograph.
 
 ![AI Lightroom interface](docs/assets/application-shell.png)
@@ -17,9 +21,9 @@ AI Lightroom is a Windows desktop photo editor for non-destructive traditional a
 
 ## Installation
 
-Download the Windows x64 ZIP from the GitHub Releases page, extract it, and run `AI Lightroom.exe`. No AI account is required for manual editing.
+Download the Windows x64 installer or ZIP from the GitHub Releases page. The installer is the easiest option; for the ZIP, extract the **whole** archive and run `AI Lightroom.exe`. No AI account is required for manual editing.
 
-For source setup, see [Installation](docs/INSTALLATION.md) and [Building](docs/BUILDING.md).
+For source setup, see [Installation](docs/INSTALLATION.md) and [Building](docs/BUILDING.md). A step-by-step Chinese guide is available at [新手完整指南](docs/GETTING_STARTED_zh-CN.md).
 
 ## Quick start
 
@@ -74,6 +78,8 @@ Choose **Custom / OpenAI-compatible API** in Settings and supply a Provider Name
 
 ## Documentation
 
+- [新手完整指南（安装、AI、模型与导出）](docs/GETTING_STARTED_zh-CN.md)
+- [安装包说明](docs/INSTALLER_zh-CN.md)
 - [User guide](docs/USER_GUIDE.md)
 - [AI providers](docs/AI_PROVIDERS.md)
 - [Provider development](docs/PROVIDER_DEVELOPMENT.md)

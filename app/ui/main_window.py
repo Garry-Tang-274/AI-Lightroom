@@ -55,7 +55,7 @@ from app.core.masks import generate_mask, mask_confidence
 from app.utils.logging_setup import configure_logging
 
 
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.0.1"
 
 
 class MainWindow(QMainWindow):

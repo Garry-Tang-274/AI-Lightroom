@@ -1,5 +1,7 @@
 # JarvisArt Local
 
+[中文部署与连接说明](JARVISART_zh-CN.md)
+
 JarvisArt Local is an optional localhost provider. AI Lightroom does not bundle, download, move, or license JarvisArt code or model weights.
 
 ## Requirements

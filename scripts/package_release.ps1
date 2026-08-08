@@ -19,7 +19,10 @@ if (Test-Path -LiteralPath $Stage) {
     throw "Release staging directory already exists: $Stage"
 }
 New-Item -ItemType Directory -Path $Stage | Out-Null
-Copy-Item -LiteralPath $Source -Destination $Stage -Recurse -Force
-Copy-Item -LiteralPath (Join-Path $ProjectRoot "LICENSE"), (Join-Path $ProjectRoot "THIRD_PARTY_NOTICES.md"), (Join-Path $ProjectRoot "README.md") -Destination $Stage
+Get-ChildItem -LiteralPath $Source -Force | ForEach-Object {
+    Copy-Item -LiteralPath $_.FullName -Destination $Stage -Recurse -Force
+}
+Copy-Item -LiteralPath (Join-Path $ProjectRoot "LICENSE"), (Join-Path $ProjectRoot "THIRD_PARTY_NOTICES.md"), (Join-Path $ProjectRoot "README.md"), (Join-Path $ProjectRoot "README_zh-CN.md") -Destination $Stage
+Copy-Item -LiteralPath (Join-Path $ProjectRoot "docs") -Destination (Join-Path $Stage "docs") -Recurse -Force
 Compress-Archive -LiteralPath $Stage -DestinationPath $Zip -CompressionLevel Optimal
 Write-Output "Release ZIP: $Zip"

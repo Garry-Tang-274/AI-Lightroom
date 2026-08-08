@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.1 - 2026-08-09
+
+- Replaced the application and desktop-shortcut artwork with a new high-resolution minimalist aperture icon; packaging now preserves the curated source icon.
+- Added the per-user Windows installer build, installer documentation, and a Chinese first-run guide covering manual editing, cloud AI, Custom API, JarvisArt model downloads, and troubleshooting.
+- Clarified the boundary between JarvisArt's official API/inference workflow and AI Lightroom's explicit localhost bridge interface.
+
 ## 1.0.0 - 2026-08-09
 
 - Public-release preparation: documentation, security guidance, notices, CI, and Windows packaging.

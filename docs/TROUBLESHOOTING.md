@@ -12,6 +12,8 @@ Confirm the key, model ID, endpoint, network, quota, and declared capabilities. 
 
 Select **JarvisArt Local → Real Native**. Set the installed JarvisArt root if auto-detection does not find it, ensure its launcher and model files are installed, then choose **Start JarvisArt**. Do not point AI Lightroom at a model file directly; it needs the existing JarvisArt localhost bridge.
 
+The official JarvisArt API and AI Lightroom's local bridge do not use the same port or request format. Read [JarvisArt Local](JARVISART.md) or the [中文部署与连接说明](JARVISART_zh-CN.md) before changing an endpoint.
+
 ## Rendering or export fails
 
 Open **Help → Open Logs Folder**, then share only a redacted diagnostic report. Verify enough free disk space and write permissions for the selected export folder.

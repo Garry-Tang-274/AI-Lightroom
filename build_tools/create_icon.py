@@ -8,6 +8,23 @@ from PIL import Image, ImageDraw
 def create_icon() -> None:
     assets = Path(__file__).resolve().parents[1] / "assets"
     assets.mkdir(parents=True, exist_ok=True)
+    png_path = assets / "app.png"
+    ico_path = assets / "app.ico"
+
+    # The repository can contain a curated high-resolution icon.  Packaging
+    # must preserve that artwork instead of redrawing the legacy fallback.
+    if png_path.is_file():
+        with Image.open(png_path) as source:
+            image = source.convert("RGBA")
+        image.save(
+            ico_path,
+            format="ICO",
+            sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)],
+        )
+        print(f"Created {ico_path} from existing {png_path}")
+        return
+
+    # Fallback used only when an app icon has not been supplied yet.
     size = 512
     image = Image.new("RGBA", (size, size), (22, 25, 29, 255))
     draw = ImageDraw.Draw(image)
@@ -37,8 +54,6 @@ def create_icon() -> None:
     draw.ellipse((207, 207, 305, 305), fill="#171a1e", outline="#d9f3ff", width=7)
     draw.ellipse((232, 232, 280, 280), fill="#3d95c8")
 
-    png_path = assets / "app.png"
-    ico_path = assets / "app.ico"
     image.save(png_path, format="PNG")
     image.save(ico_path, format="ICO", sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
     print(f"Created {png_path} and {ico_path}")
@@ -46,4 +61,3 @@ def create_icon() -> None:
 
 if __name__ == "__main__":
     create_icon()
-
