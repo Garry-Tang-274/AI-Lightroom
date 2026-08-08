@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import base64
+import json
+import logging
 
 from openai import OpenAI
 from pydantic import ValidationError
@@ -11,6 +13,9 @@ from app.ai.prompt_builder import build_prompt
 from app.ai.provider import AIProvider, PlanningRequest
 from app.ai.schemas import EditingPlan
 from app.ai.system_prompt import DEFAULT_SYSTEM_PROMPT
+
+
+logger = logging.getLogger(__name__)
 
 
 class OpenAICompatibleProvider(AIProvider):
@@ -80,8 +85,8 @@ class OpenAICompatibleProvider(AIProvider):
                     {"role": "system", "content": self.system_prompt + "\n\nReturn only valid JSON matching the EditingPlan schema."},
                     {"role": "user", "content": user_content},
                 ],
-                **({"response_format": {"type": "json_object"}} if self.capabilities.supports_structured_output else {}),
-                **self._request_options(),
+                **self._plan_response_format(),
+                **self._plan_request_options(),
             )
         except Exception as exc:
             error = error_from_exception(exc, model=self.model, request_sent=True, provider=self.name)
@@ -91,12 +96,19 @@ class OpenAICompatibleProvider(AIProvider):
                     "请求没有自动重试，照片未发生任何修改。"
                 )
             raise error from exc
-        text = _completion_text(response)
+        text = self._plan_response_text(response)
         if not text:
             raise AIRequestError(f"{self.name} 返回空内容", "AI 未返回可执行的 EditingPlan。", provider=self.name, model=self.model, request_sent=True)
         try:
             plan = EditingPlan.model_validate_json(text)
         except ValidationError as exc:
+            logger.warning(
+                "AI EditingPlan validation failed: provider=%s model=%s fields=%s response_shape=%s",
+                self.name,
+                self.model,
+                exc.errors(include_url=False),
+                _safe_json_shape(text),
+            )
             raise AIRequestError(
                 category="Pydantic schema 校验错误",
                 message=f"{self.name} 返回 JSON 不符合严格 EditingPlan schema。",
@@ -131,9 +143,33 @@ class OpenAICompatibleProvider(AIProvider):
         """Vendor-neutral extension point for compatible API options."""
         return {}
 
+    def _plan_request_options(self) -> dict[str, object]:
+        return self._request_options()
+
+    def _plan_response_format(self) -> dict[str, object]:
+        return {"response_format": {"type": "json_object"}} if self.capabilities.supports_structured_output else {}
+
+    def _plan_response_text(self, response) -> str:
+        return _completion_text(response)
+
 
 def _completion_text(response) -> str:
     choices = getattr(response, "choices", None) or []
     if not choices:
         return ""
     return str(getattr(getattr(choices[0], "message", None), "content", "") or "")
+
+
+def _safe_json_shape(text: str) -> dict[str, object]:
+    """Record only response structure, never image data or model prose."""
+    try:
+        value = json.loads(text)
+    except json.JSONDecodeError:
+        return {"kind": "invalid_json", "length": len(text)}
+    if not isinstance(value, dict):
+        return {"kind": type(value).__name__}
+    return {
+        "kind": "object",
+        "keys": sorted(str(key) for key in value),
+        "types": {str(key): type(item).__name__ for key, item in value.items()},
+    }

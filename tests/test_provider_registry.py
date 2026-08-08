@@ -49,7 +49,12 @@ def test_qwen_vision_json_plan_drives_existing_renderer_without_network():
         def create(self, **kwargs):
             self.kwargs = kwargs
             return SimpleNamespace(
-                choices=[SimpleNamespace(message=SimpleNamespace(content=plan.model_dump_json()))],
+                choices=[SimpleNamespace(message=SimpleNamespace(
+                    content=None,
+                    tool_calls=[SimpleNamespace(function=SimpleNamespace(
+                        name="submit_editing_plan", arguments=plan.model_dump_json(),
+                    ))],
+                ))],
                 usage=SimpleNamespace(prompt_tokens=120, completion_tokens=50, total_tokens=170),
             )
 
@@ -65,8 +70,10 @@ def test_qwen_vision_json_plan_drives_existing_renderer_without_network():
     assert any(layer.type == MaskType.SKY for layer in result.state.masks)
     assert np.array_equal(pixels, original)  # analysis never overwrites source pixels
     assert completions.kwargs["model"] == "qwen3.7-plus"
-    assert completions.kwargs["response_format"] == {"type": "json_object"}
+    assert "response_format" not in completions.kwargs
     assert completions.kwargs["extra_body"] == {"enable_thinking": False}
+    assert completions.kwargs["tool_choice"] == "required"
+    assert completions.kwargs["tools"][0]["function"]["name"] == "submit_editing_plan"
     user_content = completions.kwargs["messages"][1]["content"]
     assert any(item["type"] == "image_url" and item["image_url"]["url"].startswith("data:image/jpeg;base64,") for item in user_content)
     prompt = next(item["text"] for item in user_content if item["type"] == "text")
@@ -80,7 +87,12 @@ def test_qwen_error_json_and_invalid_key_are_reported_without_retry():
 
         def create(self, **kwargs):
             self.calls += 1
-            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="{not json"))])
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(
+                content=None,
+                tool_calls=[SimpleNamespace(function=SimpleNamespace(
+                    name="submit_editing_plan", arguments="{not json",
+                ))],
+            ))])
 
     bad = BadCompletions()
     provider = QwenProvider("", client=SimpleNamespace(chat=SimpleNamespace(completions=bad)))
