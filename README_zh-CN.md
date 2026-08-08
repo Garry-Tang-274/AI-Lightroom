@@ -14,14 +14,14 @@ AI Lightroom 是一款 Windows 桌面照片编辑器：传统参数调色与自�
 
 第一次使用、安装包、云端 AI 配置、JarvisArt 模型下载、导出和常见错误，请直接看：
 
-**[中文新手完整指南](docs/GETTING_STARTED_zh-CN.md)**
+**[中文新手完整指南](docs/GETTING_STARTED_zh-CN.md)** · [English getting-started guide](docs/GETTING_STARTED.md)
 
 ## 已支持的功能
 
 - JPG / PNG 导入、拖入打开、缩放、适合窗口、直方图、原图对比、撤回/重做与编辑恢复。
 - 实时基础参数、HSL、RGB/通道曲线、色彩分级、局部蒙版、画笔蒙版和非破坏性水印。
 - 从原始全分辨率照片渲染导出 JPG / PNG，并尽量保留 EXIF、ICC 与 DPI。
-- Gemini、OpenAI、Qwen / DashScope、DeepSeek 文本增量、Custom OpenAI-compatible、JarvisArt Local 与离线 Mock。
+- Gemini、OpenAI、Qwen / DashScope、DeepSeek 文本增量、Custom OpenAI-compatible、JarvisArt Local GGUF 与离线 Mock。
 - API 调用默认无自动重试；云端调用有本地每日安全上限。
 
 ## 三种使用方式
@@ -39,19 +39,30 @@ AI Lightroom 是一款 Windows 桌面照片编辑器：传统参数调色与自�
 3. `Ctrl+S` 导出。默认不会覆盖原始照片。
 4. 如需 AI，在 **文件 → 设置** 配置 Provider；AI 输入框中 `Ctrl+Enter` 发送，`Enter` 换行。
 
+## 预览质量与 AI 发送质量
+
+工具栏的 **低清预览 / 高清预览** 按钮可以立即切换工作画布；也可在 **文件 → 设置 → 性能与导出** 中选择。
+
+- **自动（默认）**：云端 Provider 默认低清，减少上传和费用；**JarvisArt Local GGUF** 默认高清，因为它在本机运行。
+- **低清** 默认最长边为 1536 px；**高清** 默认最长边为 3072 px；两个数值都可以修改。
+- “发送给 AI 的图像质量”可独立选择“跟随画布 / 始终低清 / 始终高清”。发生视觉分析时，AI 只会收到该大小的 JPEG 预览，不会收到原始全分辨率照片。
+- “弱一点”“退一点”这类纯文字增量请求可能不会再传图，这是为了延续已有的费用保护；需要重新看图时请明确说“重新看看”。
+
 ## 隐私、费用与许可
 
 - 不配置 API Key 也可以完整手动修图。
 - 云端 AI 只接收缩小的 JPEG 预览和当前编辑状态；原始全分辨率照片始终保留在本机。
 - API Key 存在 Windows Credential Manager，不写入源码、日志、发布包或 Git。
-- JarvisArt 是独立可选组件，模型、运行环境与许可证不随本项目分发。
+- JarvisArt Local GGUF 是用户自行安装的本地运行时，模型、llama.cpp 与许可证不随本项目分发。只有 **Local GGUF** 才会进行真实本地推理；**Mock** 是固定开发样例，软件会阻止它用于真实调色。
 - AI Lightroom 代码采用 [MIT License](LICENSE)；第三方说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。本项目与 Adobe 没有隶属或认可关系。
 
 ## 文档
 
-- [中文新手完整指南](docs/GETTING_STARTED_zh-CN.md)
-- [安装包说明](docs/INSTALLER_zh-CN.md)
+- [中文新手完整指南](docs/GETTING_STARTED_zh-CN.md) · [English getting-started guide](docs/GETTING_STARTED.md)
+- [安装包说明](docs/INSTALLER_zh-CN.md) · [Installer guide (English)](docs/INSTALLER.md)
 - [JarvisArt 本地部署与连接说明](docs/JARVISART_zh-CN.md)
-- [AI Provider 说明](docs/AI_PROVIDERS.md)
-- [自定义 OpenAI-compatible API](docs/CUSTOM_API.md)
-- [故障排除](docs/TROUBLESHOOTING.md)
+- [AI Provider 说明](docs/AI_PROVIDERS_zh-CN.md) · [English](docs/AI_PROVIDERS.md)
+- [自定义 OpenAI-compatible API](docs/CUSTOM_API_zh-CN.md) · [English](docs/CUSTOM_API.md)
+- [故障排除](docs/TROUBLESHOOTING_zh-CN.md) · [English](docs/TROUBLESHOOTING.md)
+- [安装与源码运行](docs/INSTALLATION_zh-CN.md) · [Windows 打包](docs/BUILDING_zh-CN.md)
+- [架构](docs/ARCHITECTURE_zh-CN.md) · [Provider 开发说明](docs/PROVIDER_DEVELOPMENT_zh-CN.md)

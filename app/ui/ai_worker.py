@@ -9,6 +9,7 @@ from app.ai.provider_registry import provider_registry
 from app.ai.usage import AIUsageManager
 from app.core.editor_state import EditorState
 from app.utils.config import RuntimeSettings
+from app.utils.io_utils import make_preview
 
 
 class AIWorkerSignals(QObject):
@@ -17,10 +18,13 @@ class AIWorkerSignals(QObject):
 
 
 class AIEditWorker(QRunnable):
-    def __init__(self, instruction: str, source_preview: np.ndarray, state: EditorState, history_summary: list[str], settings: RuntimeSettings, api_key: str, selected_mask_id: str | None) -> None:
+    def __init__(self, instruction: str, source_pixels: np.ndarray, state: EditorState, history_summary: list[str], settings: RuntimeSettings, api_key: str, selected_mask_id: str | None) -> None:
         super().__init__()
         self.instruction = instruction
-        self.source_preview = source_preview
+        # Keep the original image pixels in the worker only.  The UI can stay
+        # responsive on a low-quality working preview while this worker creates
+        # the separately configured image sent to an AI provider.
+        self.source_pixels = source_pixels
         self.state = state.snapshot()
         self.history_summary = history_summary
         self.settings = settings
@@ -50,12 +54,13 @@ class AIEditWorker(QRunnable):
                     input_tokens=input_tokens, output_tokens=output_tokens, total_tokens=total_tokens,
                 ),
             )
+            analysis_source = make_preview(self.source_pixels, self.settings.active_ai_preview_size)
             orchestrator = AIOrchestrator(
-                provider, preview_size=self.settings.preview_size,
+                provider, preview_size=self.settings.active_ai_preview_size,
                 reinspection_enabled=self.settings.ai_reinspection,
                 max_vision_calls=self.settings.max_vision_calls,
             )
-            result = orchestrator.process(self.instruction, self.source_preview, self.state, self.history_summary, self.selected_mask_id)
+            result = orchestrator.process(self.instruction, analysis_source, self.state, self.history_summary, self.selected_mask_id)
             if self._cancelled:
                 raise AIRequestError("已取消本地等待", "取消只停止本地等待；已发出的云端请求可能仍计入调用。", provider=provider_name, model=model, request_sent=use_cloud)
         except Exception as exc:

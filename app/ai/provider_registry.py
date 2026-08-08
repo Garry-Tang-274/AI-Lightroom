@@ -33,7 +33,7 @@ class ProviderRegistry:
     def descriptor(self, provider_id: str) -> ProviderDescriptor:
         return self._descriptors.get(provider_id, self._descriptors["mock"])
 
-    def make_config(self, provider_id: str, model: str = "", base_url: str = "", display_name: str = "", *, custom_vision: bool = True, custom_structured_output: bool = True, local_mode: str = "mock", custom_organization: str = "", custom_headers: str = "", jarvisart_root: str = "", jarvisart_endpoint: str = "http://127.0.0.1:8765", jarvisart_auto_start: bool = True) -> ProviderConfig:
+    def make_config(self, provider_id: str, model: str = "", base_url: str = "", display_name: str = "", *, custom_vision: bool = True, custom_structured_output: bool = True, local_mode: str = "real", custom_organization: str = "", custom_headers: str = "", jarvisart_root: str = "", jarvisart_endpoint: str = "http://127.0.0.1:8765", jarvisart_auto_start: bool = True) -> ProviderConfig:
         descriptor = self.descriptor(provider_id)
         capabilities = descriptor.capabilities
         if descriptor.is_custom:
@@ -51,7 +51,7 @@ class ProviderRegistry:
             base_url=(base_url.strip() or descriptor.default_base_url).rstrip("/"),
             display_name=display_name.strip() or descriptor.display_name,
             capabilities=capabilities,
-            local_mode=local_mode if local_mode in {"mock", "real"} else "mock",
+            local_mode=local_mode if local_mode in {"mock", "real"} else "real",
             custom_organization=custom_organization.strip(),
             custom_headers=custom_headers.strip(),
             jarvisart_root=jarvisart_root.strip(),
@@ -115,5 +115,5 @@ provider_registry.register(ProviderDescriptor("openai", "OpenAI（高质量 AI �
 provider_registry.register(ProviderDescriptor("qwen", "阿里云百炼 / Qwen", "qwen3.7-plus", QWEN_DEFAULT_BASE_URL, api_key_environment="DASHSCOPE_API_KEY", capabilities=ProviderCapabilities(supports_vision=True, supports_multiple_images=True, supports_structured_output=True, supports_text_chat=True, supports_streaming=True, supports_custom_base_url=True), cost_type="cloud_api", privacy_type="cloud_preview"), _qwen)
 provider_registry.register(ProviderDescriptor("deepseek", "DeepSeek（文本增量调整）", "deepseek-chat", "https://api.deepseek.com/v1", api_key_environment="DEEPSEEK_API_KEY", capabilities=ProviderCapabilities(supports_structured_output=True, supports_text_chat=True, supports_streaming=True, supports_custom_base_url=True), cost_type="cloud_api", privacy_type="text_state_only"), _deepseek)
 provider_registry.register(ProviderDescriptor("custom", "Custom / OpenAI-compatible API", "", "", api_key_environment="AI_LIGHTROOM_CUSTOM_API_KEY", capabilities=ProviderCapabilities(supports_vision=True, supports_multiple_images=True, supports_structured_output=True, supports_text_chat=True, supports_streaming=True, supports_custom_base_url=True), is_custom=True, cost_type="user_configured", privacy_type="user_configured"), _compatible)
-provider_registry.register(ProviderDescriptor("mock", "离线 Mock", "offline", requires_api_key=False, capabilities=ProviderCapabilities(supports_vision=True, supports_structured_output=True, supports_text_chat=True), cost_type="free", privacy_type="local"), _mock)
-provider_registry.register(ProviderDescriptor("jarvisart_local", "JarvisArt Local", "JarvisArt-1208", requires_api_key=False, capabilities=ProviderCapabilities(supports_vision=True, supports_structured_output=True, supports_text_chat=True), cost_type="free", privacy_type="local"), _jarvisart)
+provider_registry.register(ProviderDescriptor("mock", "Offline Mock（仅开发测试）", "offline", requires_api_key=False, capabilities=ProviderCapabilities(supports_vision=True, supports_structured_output=True, supports_text_chat=True), cost_type="free", privacy_type="local"), _mock)
+provider_registry.register(ProviderDescriptor("jarvisart_local", "JarvisArt Local GGUF", "qwen2_vl", requires_api_key=False, capabilities=ProviderCapabilities(supports_vision=True, supports_structured_output=True, supports_text_chat=True), cost_type="free", privacy_type="local"), _jarvisart)

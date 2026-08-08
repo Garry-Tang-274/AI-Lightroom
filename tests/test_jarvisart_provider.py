@@ -104,7 +104,7 @@ def test_mock_provider_pipeline_returns_local_status_and_never_uses_cloud_budget
     pixels[:45] = (90, 160, 220)
     pixels[45:] = (112, 99, 73)
     result = AIOrchestrator(provider, reinspection_enabled=False).process("荒漠公路", pixels, EditorState(), [])
-    assert result.provider_name.endswith("Mock Native Ready")
+    assert result.provider_name.endswith("Offline Mock Test")
     assert result.vision_calls == 1
     assert result.state.basic.contrast == 10
     assert not result.unsupported_operations
@@ -113,8 +113,8 @@ def test_mock_provider_pipeline_returns_local_status_and_never_uses_cloud_budget
 def test_real_runtime_stub_reports_not_installed_without_cloud_fallback():
     config = provider_registry.make_config("jarvisart_local", local_mode="real")
     provider = JarvisArtProvider(config, runtime=RealJarvisArtRuntimeStub())
-    assert provider.runtime_status.state == "Real Model Not Installed"
-    with pytest.raises(AIRequestError, match="官方 JarvisArt") as raised:
+    assert provider.runtime_status.state == "Local GGUF Model Not Installed"
+    with pytest.raises(AIRequestError, match="Local GGUF") as raised:
         provider.plan(PlanningRequest("test", EditorState(), None, []))
     assert not raised.value.request_sent
 
@@ -139,6 +139,39 @@ def test_real_jarvisart_lua_is_parsed_into_supported_parameters_and_visible_unsu
     assert [(item.tool, item.value) for item in result.plan.global_adjustments] == [("set_exposure", -0.35), ("set_contrast", 12.0)]
     assert result.plan.hsl_adjustments[0].color == HSLColor.BLUE
     assert any("LensBlur" in item for item in result.unsupported_operations)
+
+
+def test_local_gguf_runtime_posts_the_preview_to_the_local_bridge_and_parses_lua(monkeypatch):
+    captured: dict[str, object] = {}
+
+    class ReadyManager:
+        endpoint = "http://127.0.0.1:8765"
+
+        def status(self):
+            return type("Status", (), {"state": "Ready", "model": "qwen2_vl", "message": "ready"})()
+
+    class Response:
+        def __enter__(self): return self
+        def __exit__(self, *args): return False
+        def read(self): return b"return { Exposure2012 = -0.4, Contrast2012 = 11 }"
+
+    def fake_urlopen(request, timeout):
+        captured["url"] = request.full_url
+        captured["timeout"] = timeout
+        captured["payload"] = json.loads(request.data.decode("utf-8"))
+        return Response()
+
+    monkeypatch.setattr("app.ai.jarvisart.runtime.urlopen", fake_urlopen)
+    runtime = LocalJarvisArtRuntime(manager=ReadyManager(), auto_start=False)
+    plan = runtime.infer(b"jpeg bytes", "make it documentary", EditorState())
+
+    assert captured["url"] == "http://127.0.0.1:8765/develop_settings"
+    assert captured["timeout"] == 300.0
+    assert captured["payload"]["prompt"] == "make it documentary"
+    assert not Path(captured["payload"]["photo_path"]).exists()
+    assert [(item.parameter, item.value) for item in plan.global_adjustments] == [
+        ("Exposure2012", -0.4), ("Contrast2012", 11.0),
+    ]
 
 
 def test_local_service_status_reports_ready_from_a_health_response(tmp_path):

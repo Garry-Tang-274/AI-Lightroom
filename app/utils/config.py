@@ -26,11 +26,20 @@ class RuntimeSettings:
     custom_supports_structured_output: bool = True
     custom_organization: str = ""
     custom_headers: str = ""
-    jarvisart_mode: str = "mock"
+    # Real mode is the user-supplied local GGUF/native runtime. The
+    # fixture-backed Mock mode is deliberately opt-in and clearly labelled in
+    # the UI because it cannot inspect a user's photograph.
+    jarvisart_mode: str = "real"
     jarvisart_root: str = ""
     jarvisart_endpoint: str = "http://127.0.0.1:8765"
     jarvisart_auto_start: bool = True
+    # ``preview_size`` remains the low-resolution maximum edge for backward
+    # compatibility with 1.0.1 settings.  High quality is intentionally kept
+    # separate so a cloud provider can remain economical by default.
     preview_size: int = 1536
+    high_preview_size: int = 3072
+    preview_quality: str = "auto"  # auto, low, high
+    ai_preview_quality: str = "follow_preview"  # follow_preview, low, high
     ai_reinspection: bool = False
     max_vision_calls: int = 2
     system_prompt: str = DEFAULT_SYSTEM_PROMPT
@@ -44,6 +53,33 @@ class RuntimeSettings:
     @property
     def active_model(self) -> str:
         return self.model or provider_registry.descriptor(self.provider).default_model
+
+    @property
+    def effective_preview_quality(self) -> str:
+        """Resolve the visible working-preview quality without guessing cost."""
+        if self.preview_quality in {"low", "high"}:
+            return self.preview_quality
+        # The user-supplied local JarvisArt GGUF runtime has no per-request
+        # cloud cost, so the useful default is a larger analysis and working
+        # preview. All cloud APIs stay on the economical low setting until the
+        # user opts in.
+        if self.provider == "jarvisart_local" and self.jarvisart_mode == "real":
+            return "high"
+        return "low"
+
+    @property
+    def active_preview_size(self) -> int:
+        return self.high_preview_size if self.effective_preview_quality == "high" else self.preview_size
+
+    @property
+    def effective_ai_preview_quality(self) -> str:
+        if self.ai_preview_quality in {"low", "high"}:
+            return self.ai_preview_quality
+        return self.effective_preview_quality
+
+    @property
+    def active_ai_preview_size(self) -> int:
+        return self.high_preview_size if self.effective_ai_preview_quality == "high" else self.preview_size
 
     @property
     def provider_config(self):
@@ -89,11 +125,14 @@ class SettingsManager:
             custom_supports_structured_output=_as_bool(self.store.value("ai/custom_supports_structured_output", True)),
             custom_organization=str(self.store.value("ai/custom_organization", "")),
             custom_headers=str(self.store.value("ai/custom_headers", "")),
-            jarvisart_mode=str(self.store.value("ai/jarvisart_mode", "mock")),
+            jarvisart_mode=_choice(self.store.value("ai/jarvisart_mode", "real"), {"mock", "real"}, "real"),
             jarvisart_root=str(self.store.value("ai/jarvisart_root", "")),
             jarvisart_endpoint=str(self.store.value("ai/jarvisart_endpoint", "http://127.0.0.1:8765")),
             jarvisart_auto_start=_as_bool(self.store.value("ai/jarvisart_auto_start", True)),
             preview_size=_bounded_int(self.store.value("performance/preview_size", 1536), 640, 2048, 1536),
+            high_preview_size=_bounded_int(self.store.value("performance/high_preview_size", 3072), 2048, 4096, 3072),
+            preview_quality=_choice(self.store.value("performance/preview_quality", "auto"), {"auto", "low", "high"}, "auto"),
+            ai_preview_quality=_choice(self.store.value("ai/preview_quality", "follow_preview"), {"follow_preview", "low", "high"}, "follow_preview"),
             ai_reinspection=_as_bool(self.store.value("ai/reinspection", False)),
             max_vision_calls=_bounded_int(self.store.value("ai/max_vision_calls", 2), 1, 2, 2),
             system_prompt=str(self.store.value("ai/system_prompt", DEFAULT_SYSTEM_PROMPT) or DEFAULT_SYSTEM_PROMPT),
@@ -139,6 +178,9 @@ class SettingsManager:
         self.store.setValue("ai/jarvisart_endpoint", settings.jarvisart_endpoint)
         self.store.setValue("ai/jarvisart_auto_start", settings.jarvisart_auto_start)
         self.store.setValue("performance/preview_size", settings.preview_size)
+        self.store.setValue("performance/high_preview_size", settings.high_preview_size)
+        self.store.setValue("performance/preview_quality", settings.preview_quality)
+        self.store.setValue("ai/preview_quality", settings.ai_preview_quality)
         self.store.setValue("ai/reinspection", settings.ai_reinspection)
         self.store.setValue("ai/max_vision_calls", settings.max_vision_calls)
         self.store.setValue("ai/system_prompt", settings.system_prompt)
@@ -177,3 +219,8 @@ def _bounded_int(value, minimum: int, maximum: int, default: int) -> int:
         return max(minimum, min(maximum, int(value)))
     except (TypeError, ValueError):
         return default
+
+
+def _choice(value, allowed: set[str], default: str) -> str:
+    text = str(value).strip().lower()
+    return text if text in allowed else default

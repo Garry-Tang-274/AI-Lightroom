@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.2 - 2026-08-09
+
+- Added low/high/automatic working-preview selection. High quality rebuilds a larger local preview and, when a visual request is needed, sends the same configured JPEG maximum edge to the AI provider. User-supplied JarvisArt Local GGUF defaults to high; cloud providers default to low.
+- Added an independent AI image-quality control so the visible preview and the vision-request preview can be chosen separately.
+- Blocked JarvisArt Local's fixture-backed Mock mode from silently applying a fixed demonstration plan. It now states that it cannot inspect photos and directs users to Local GGUF or a configured cloud provider.
+- Promoted the user's existing local llama.cpp / Qwen2-VL GGUF bridge to the primary local provider profile, with a clear Local GGUF label and no cloud request fallback.
+- Replaced the first-release dark icon with a brighter, high-contrast aperture icon in the executable, installer, ZIP, and desktop shortcut.
+- Added bilingual onboarding and installer documentation for the preview-quality controls and the real-versus-Mock JarvisArt boundary.
+
 ## 1.0.1 - 2026-08-09
 
 - Replaced the application and desktop-shortcut artwork with a new high-resolution minimalist aperture icon; packaging now preserves the curated source icon.

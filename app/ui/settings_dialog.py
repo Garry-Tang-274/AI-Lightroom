@@ -69,8 +69,8 @@ class SettingsDialog(QDialog):
         self.custom_headers = QLineEdit()
         self.custom_headers.setPlaceholderText('可选 JSON，例如 {"X-Client": "AI-Lightroom"}')
         self.jarvisart_mode = QComboBox()
-        self.jarvisart_mode.addItem("Mock Native（本地 fixture）", "mock")
-        self.jarvisart_mode.addItem("Real Native（官方本地模型）", "real")
+        self.jarvisart_mode.addItem("Local GGUF（主力本地推理）", "real")
+        self.jarvisart_mode.addItem("Mock Native（仅开发测试；不会分析图片）", "mock")
         self.jarvisart_status = QLabel()
         self.jarvisart_status.setWordWrap(True)
         self.jarvisart_root = QLineEdit()
@@ -191,12 +191,13 @@ class SettingsDialog(QDialog):
         self.jarvisart_auto_start.setChecked(config.jarvisart_auto_start)
         if is_jarvisart:
             if config.local_mode == "mock":
-                status = "Mock Native Ready：使用本地原生输出 fixture，不上传照片、不调用云端、无 API 费用。"
+                status = "离线 Mock 测试模式：仅返回固定 fixture，不会读取、理解或分析当前照片。默认会阻止执行；仅供开发验证时手动确认。"
+                self.provider_description.setText("Mock Native 不是 JarvisArt 推理。它不会分析照片，也不会产出可用于验收的调色建议。请选择 Local GGUF 或已配置的云端 Provider。")
             else:
                 from app.ai.jarvisart.service import JarvisArtServiceManager
                 detected = JarvisArtServiceManager(config.jarvisart_root, config.jarvisart_endpoint).status()
                 status = f"{detected.state}：{detected.message}\n模型：{detected.model or 'JarvisArt-1208'}\n本地 GPU · 无云端费用 · 图片不会发送到云端"
-            self.provider_description.setText("JarvisArt Local 在本机处理缩小预览；不会上传原图，也不使用云端 AI 额度。")
+                self.provider_description.setText("JarvisArt Local GGUF 使用你已安装的本地 llama.cpp / Qwen2-VL 服务处理图片；不会上传原图，也不使用云端 AI 额度。默认高清预览，可在性能设置中调整。")
             self.jarvisart_status.setText(status)
         else:
             self.provider_description.setText("离线 Provider，不发送照片或网络请求。" if not descriptor.requires_api_key else "使用用户自己的 API Key；仅发送缩小 JPEG Preview 和当前编辑状态。")
@@ -296,11 +297,26 @@ class SettingsDialog(QDialog):
     def _build_performance_tab(self) -> QWidget:
         tab = QWidget()
         form = QFormLayout(tab)
+        self.preview_quality = QComboBox()
+        self.preview_quality.addItem("自动（本地 JarvisArt GGUF 默认高清；云端默认低清）", "auto")
+        self.preview_quality.addItem("低清（响应更快、云端更省流量）", "low")
+        self.preview_quality.addItem("高清（画布与 AI 视觉分析都使用更大预览）", "high")
+        self.preview_quality.setCurrentIndex(max(0, self.preview_quality.findData(self.runtime.preview_quality)))
         self.preview_size = QSpinBox()
         self.preview_size.setRange(640, 2048)
         self.preview_size.setSingleStep(128)
         self.preview_size.setSuffix(" px")
         self.preview_size.setValue(self.runtime.preview_size)
+        self.high_preview_size = QSpinBox()
+        self.high_preview_size.setRange(2048, 4096)
+        self.high_preview_size.setSingleStep(256)
+        self.high_preview_size.setSuffix(" px")
+        self.high_preview_size.setValue(self.runtime.high_preview_size)
+        self.ai_preview_quality = QComboBox()
+        self.ai_preview_quality.addItem("跟随画布预览", "follow_preview")
+        self.ai_preview_quality.addItem("始终低清（云端节省流量）", "low")
+        self.ai_preview_quality.addItem("始终高清（更精细的视觉分析）", "high")
+        self.ai_preview_quality.setCurrentIndex(max(0, self.ai_preview_quality.findData(self.runtime.ai_preview_quality)))
         self.jpeg_quality = QSpinBox()
         self.jpeg_quality.setRange(1, 100)
         self.jpeg_quality.setValue(self.runtime.export_jpeg_quality)
@@ -309,7 +325,11 @@ class SettingsDialog(QDialog):
         self.performance.addItem("平衡", "balanced")
         self.performance.addItem("性能", "performance")
         self.performance.setCurrentIndex(max(0, self.performance.findData(self.runtime.performance_mode)))
-        form.addRow("分析预览最长边", self.preview_size)
+        form.addRow("预览质量", self.preview_quality)
+        form.addRow("低清最长边", self.preview_size)
+        form.addRow("高清最长边", self.high_preview_size)
+        form.addRow("发送给 AI 的图像质量", self.ai_preview_quality)
+        form.addRow("说明", QLabel("高清模式会重建更大的工作预览；需要视觉分析时，AI 收到同等质量的 JPEG 预览。增量文字指令可能不发送图片，以节省云端调用。"))
         form.addRow("默认 JPEG 质量", self.jpeg_quality)
         form.addRow("性能模式", self.performance)
         form.addRow("硬件", QLabel(f"CPU 逻辑线程：{psutil.cpu_count(logical=True) or '未知'}\nAI 请求在后台执行"))
@@ -327,7 +347,9 @@ class SettingsDialog(QDialog):
             custom_organization=self.custom_organization.text().strip(), custom_headers=self.custom_headers.text().strip(),
             jarvisart_root=self.jarvisart_root.text().strip(), jarvisart_endpoint=self.jarvisart_endpoint.text().strip() or "http://127.0.0.1:8765",
             jarvisart_auto_start=self.jarvisart_auto_start.isChecked(),
-            preview_size=self.preview_size.value(), ai_reinspection=self.reinspection.isChecked(), max_vision_calls=self.max_calls.value(),
+            preview_size=self.preview_size.value(), high_preview_size=self.high_preview_size.value(),
+            preview_quality=str(self.preview_quality.currentData()), ai_preview_quality=str(self.ai_preview_quality.currentData()),
+            ai_reinspection=self.reinspection.isChecked(), max_vision_calls=self.max_calls.value(),
             system_prompt=self.system_prompt.toPlainText().strip() or DEFAULT_SYSTEM_PROMPT,
             export_jpeg_quality=self.jpeg_quality.value(), performance_mode=self.performance.currentData(),
         )

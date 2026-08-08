@@ -22,7 +22,7 @@ from app.utils.logging_setup import configure_logging, install_exception_hook
 from app.utils.paths import resource_path
 
 
-__version__ = "1.0.1"
+__version__ = "1.0.2"
 
 
 def package_self_check() -> int:

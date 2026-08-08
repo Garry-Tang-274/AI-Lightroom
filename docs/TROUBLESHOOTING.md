@@ -2,7 +2,7 @@
 
 ## The app opens but AI is unavailable
 
-Manual editing does not require an AI provider. Configure a cloud key in Settings or select Offline Mock. Check the AI panel status for the active provider and model.
+Manual editing does not require an AI provider. Configure a cloud key in Settings or select JarvisArt Local GGUF. Check the AI panel status for the active provider and model. Offline Mock is deliberately blocked from real editing because it cannot inspect a photograph.
 
 ## Cloud connection test fails
 
@@ -10,7 +10,7 @@ Confirm the key, model ID, endpoint, network, quota, and declared capabilities. 
 
 ## JarvisArt is Offline
 
-Select **JarvisArt Local → Real Native**. Set the installed JarvisArt root if auto-detection does not find it, ensure its launcher and model files are installed, then choose **Start JarvisArt**. Do not point AI Lightroom at a model file directly; it needs the existing JarvisArt localhost bridge.
+Select **JarvisArt Local GGUF → Local GGUF**. Set the installed local-runtime root if auto-detection does not find it, ensure its launcher, GGUF, and projection files are installed, then choose **Start JarvisArt**. Do not point AI Lightroom at a model file directly; it needs the existing localhost bridge.
 
 The official JarvisArt API and AI Lightroom's local bridge do not use the same port or request format. Read [JarvisArt Local](JARVISART.md) or the [中文部署与连接说明](JARVISART_zh-CN.md) before changing an endpoint.
 

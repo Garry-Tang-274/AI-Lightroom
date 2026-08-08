@@ -5,13 +5,14 @@ import platform
 import subprocess
 
 from PySide6.QtCore import QSettings, QThreadPool, QTimer, Qt, QUrl
-from PySide6.QtGui import QAction, QKeySequence, QDesktopServices
+from PySide6.QtGui import QAction, QActionGroup, QKeySequence, QDesktopServices
 from PySide6.QtWidgets import (
     QFileDialog,
     QInputDialog,
     QLabel,
     QListWidget,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QSplitter,
     QTabWidget,
@@ -55,7 +56,7 @@ from app.core.masks import generate_mask, mask_confidence
 from app.utils.logging_setup import configure_logging
 
 
-APP_VERSION = "1.0.1"
+APP_VERSION = "1.0.2"
 
 
 class MainWindow(QMainWindow):
@@ -151,6 +152,22 @@ class MainWindow(QMainWindow):
         self.paste_adjustments_action = QAction("粘贴调整", self)
         self.paste_adjustments_action.setShortcut(QKeySequence("Ctrl+Alt+V"))
         self.paste_adjustments_action.triggered.connect(self.paste_adjustments)
+        self.preview_quality_menu = QMenu("预览质量", self)
+        self.preview_quality_group = QActionGroup(self)
+        self.preview_quality_group.setExclusive(True)
+        self.preview_quality_actions: dict[str, QAction] = {}
+        for mode, label in (
+            ("auto", "自动（本地 JarvisArt GGUF 默认高清；云端默认低清）"),
+            ("low", "低清预览"),
+            ("high", "高清预览"),
+        ):
+            action = QAction(label, self)
+            action.setCheckable(True)
+            action.triggered.connect(lambda _checked=False, selected=mode: self._set_preview_quality(selected))
+            self.preview_quality_group.addAction(action)
+            self.preview_quality_menu.addAction(action)
+            self.preview_quality_actions[mode] = action
+        self._update_preview_quality_actions()
 
     def _build_menu(self) -> None:
         file_menu = self.menuBar().addMenu("文件")
@@ -175,6 +192,8 @@ class MainWindow(QMainWindow):
         view_menu.addAction(self.fit_action)
         view_menu.addAction(self.actual_action)
         view_menu.addAction(self.before_action)
+        view_menu.addSeparator()
+        view_menu.addMenu(self.preview_quality_menu)
         help_menu = self.menuBar().addMenu("帮助")
         open_logs = help_menu.addAction("打开日志文件夹")
         open_logs.triggered.connect(self._open_logs_folder)
@@ -192,6 +211,10 @@ class MainWindow(QMainWindow):
         toolbar.addSeparator()
         toolbar.addAction(self.fit_action)
         toolbar.addAction(self.actual_action)
+        self.preview_quality_button = QToolButton(self)
+        self.preview_quality_button.setMenu(self.preview_quality_menu)
+        self.preview_quality_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        toolbar.addWidget(self.preview_quality_button)
         toolbar.addSeparator()
         toolbar.addAction(self.undo_action)
         toolbar.addAction(self.redo_action)
@@ -202,6 +225,7 @@ class MainWindow(QMainWindow):
         self.before_button.released.connect(self._show_after)
         toolbar.addWidget(self.before_button)
         self.addToolBar(toolbar)
+        self._update_preview_quality_actions()
 
     def _build_workspace(self) -> None:
         self.image_view = ImageView()
@@ -283,7 +307,7 @@ class MainWindow(QMainWindow):
     def open_image(self, filename: str) -> None:
         try:
             loaded = load_image(filename)
-            preview = make_preview(loaded.pixels, self.runtime_settings.preview_size)
+            preview = make_preview(loaded.pixels, self.runtime_settings.active_preview_size)
         except Exception as exc:  # user-facing boundary
             QMessageBox.critical(self, "无法打开图片", str(exc))
             return
@@ -331,6 +355,57 @@ class MainWindow(QMainWindow):
         self._refresh_ai_status()
         if not self.state.is_pristine():
             self._queue_preview_render()
+
+    def _preview_quality_label(self, quality: str | None = None) -> str:
+        resolved = quality or self.runtime_settings.effective_preview_quality
+        return "高清" if resolved == "high" else "低清"
+
+    def _update_preview_quality_actions(self) -> None:
+        if not hasattr(self, "preview_quality_actions"):
+            return
+        selected = self.runtime_settings.preview_quality
+        action = self.preview_quality_actions.get(selected, self.preview_quality_actions["auto"])
+        action.setChecked(True)
+        if hasattr(self, "preview_quality_button"):
+            visible = self._preview_quality_label()
+            self.preview_quality_button.setText(f"{visible}预览")
+            self.preview_quality_button.setToolTip(
+                f"当前：{visible}（最长边 {self.runtime_settings.active_preview_size}px）。点击切换预览质量。"
+            )
+
+    def _rebuild_visible_preview_source(self) -> None:
+        """Rebuild only the working preview; original pixels stay untouched."""
+        if self.loaded_image is None:
+            return
+        self._render_generation += 1
+        self._render_timer.stop()
+        self.preview_source = make_preview(self.loaded_image.pixels, self.runtime_settings.active_preview_size)
+        self.current_preview = self.preview_source.copy()
+        self.image_view.set_image(self.preview_source)
+        self.histogram.set_image(self.preview_source)
+        self._update_mask_overlay()
+        if not self.state.is_pristine():
+            self._queue_preview_render()
+
+    def _set_preview_quality(self, mode: str) -> None:
+        if mode not in {"auto", "low", "high"}:
+            return
+        if self._ai_worker is not None:
+            self.statusBar().showMessage("AI 正在处理中；完成后再切换预览质量。", 5000)
+            self._update_preview_quality_actions()
+            return
+        previous_edge = self.runtime_settings.active_preview_size
+        self.settings.setValue("performance/preview_quality", mode)
+        self.settings.sync()
+        self.runtime_settings = self.settings_manager.runtime()
+        self._update_preview_quality_actions()
+        if self.loaded_image is not None and previous_edge != self.runtime_settings.active_preview_size:
+            self._rebuild_visible_preview_source()
+        self.statusBar().showMessage(
+            f"已切换到{self._preview_quality_label()}预览（最长边 {self.runtime_settings.active_preview_size}px）。"
+            "AI 图像质量可在 设置 → 性能与导出 中单独设置。",
+            7000,
+        )
 
     def dragEnterEvent(self, event) -> None:  # noqa: N802
         urls = event.mimeData().urls() if event.mimeData().hasUrls() else []
@@ -841,6 +916,12 @@ class MainWindow(QMainWindow):
         budget = self.usage_manager.status()
         provider_config = self.runtime_settings.provider_config
         provider_descriptor = provider_registry.descriptor(provider_config.provider_id)
+        if provider_config.provider_id == "mock":
+            self._show_offline_mock_notice()
+            return
+        if provider_config.provider_id == "jarvisart_local" and provider_config.local_mode == "mock":
+            self._show_jarvisart_mock_notice()
+            return
         api_key = self.settings_manager.provider_api_key(provider_config.provider_id)
         use_cloud = provider_descriptor.requires_api_key and bool(api_key)
         if provider_descriptor.requires_api_key and not api_key:
@@ -862,7 +943,7 @@ class MainWindow(QMainWindow):
         history_summary = [entry.label for entry in self.history.entries[-8:]]
         worker = AIEditWorker(
             prompt,
-            self.preview_source,
+            self.loaded_image.pixels if self.loaded_image is not None else self.preview_source,
             self.state,
             history_summary,
             self.runtime_settings,
@@ -875,8 +956,46 @@ class MainWindow(QMainWindow):
         self.ai_panel.set_busy(True)
         self._last_ai_error = None
         self.ai_panel.set_retry_available(False)
-        self.statusBar().showMessage("AI 正在分析当前画面和编辑状态…")
+        ai_quality = self._preview_quality_label(self.runtime_settings.effective_ai_preview_quality)
+        self.statusBar().showMessage(
+            f"AI 正在分析当前画面和编辑状态… 视觉分析将使用{ai_quality} JPEG 预览（最长边 {self.runtime_settings.active_ai_preview_size}px）。"
+        )
         self._render_pool.start(worker)
+
+    def _show_jarvisart_mock_notice(self) -> None:
+        """Never let a fixed fixture masquerade as visual inference."""
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("JarvisArt Mock 不能执行真实调色")
+        box.setText("当前选择的是离线 Mock 测试模式。它只会返回固定演示参数，不会读取或分析当前照片。")
+        box.setInformativeText("为了避免“看起来已完成、实际没有理解指令”的误导，本次没有执行任何编辑。请切换到 Local GGUF（主力本地推理）或已配置的云端 AI Provider。")
+        settings_button = box.addButton("打开设置", QMessageBox.ButtonRole.ActionRole)
+        box.addButton(QMessageBox.StandardButton.Cancel)
+        box.exec()
+        self.ai_panel.add_assistant_message(
+            "已阻止离线 Mock 测试模式执行：它不会分析图片，因此不会用于真实调色。当前照片未发生任何修改。"
+        )
+        self.statusBar().showMessage("离线 Mock 不会执行真实调色；请在设置中选择 Local GGUF 或云端 Provider。", 9000)
+        self._refresh_ai_status()
+        if box.clickedButton() is settings_button:
+            self.open_settings()
+
+    def _show_offline_mock_notice(self) -> None:
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("Offline Mock 不能执行真实调色")
+        box.setText("当前选择的是 Offline Mock。它只用于开发测试，不会读取、理解或分析当前照片。")
+        box.setInformativeText("为了避免固定演示参数被误当成真实 AI 结果，本次没有执行任何编辑。请在设置中选择 Local GGUF 或已配置的云端 Provider。")
+        settings_button = box.addButton("打开设置", QMessageBox.ButtonRole.ActionRole)
+        box.addButton(QMessageBox.StandardButton.Cancel)
+        box.exec()
+        self.ai_panel.add_assistant_message(
+            "已阻止 Offline Mock 执行：它不会分析图片，因此不会用于真实调色。当前照片未发生任何修改。"
+        )
+        self.statusBar().showMessage("Offline Mock 仅用于开发测试；请在设置中选择 Local GGUF 或云端 Provider。", 9000)
+        self._refresh_ai_status()
+        if box.clickedButton() is settings_button:
+            self.open_settings()
 
     def _ai_finished(self, result) -> None:
         self._ai_worker = None
@@ -897,6 +1016,7 @@ class MainWindow(QMainWindow):
             f"依据：{result.final_plan.reasoning_summary}",
             f"Provider：{result.provider_name}",
             f"视觉调用：{result.vision_calls}",
+            f"视觉预览上限：{result.analysis_preview_max_edge}px",
         ]
         if result.changed_fields:
             details.append("\n参数与局部调整：\n- " + "\n- ".join(result.changed_fields))
@@ -945,8 +1065,12 @@ class MainWindow(QMainWindow):
     def open_settings(self) -> None:
         dialog = SettingsDialog(self.settings_manager, self)
         if dialog.exec():
+            previous_edge = self.runtime_settings.active_preview_size
             self.runtime_settings = self.settings_manager.runtime()
             self._render_pool.setMaxThreadCount(self.runtime_settings.worker_threads)
+            self._update_preview_quality_actions()
+            if self.loaded_image is not None and previous_edge != self.runtime_settings.active_preview_size:
+                self._rebuild_visible_preview_source()
             self._refresh_ai_status()
 
     def _cancel_ai_request(self) -> None:
@@ -969,11 +1093,13 @@ class MainWindow(QMainWindow):
         if not descriptor.requires_api_key:
             if config.provider_id == "jarvisart_local":
                 if config.local_mode == "mock":
-                    state = "Mock Native Ready"
+                    return "⚠ JarvisArt Local · 离线 Mock 测试（不会分析照片）"
                 else:
                     from app.ai.jarvisart.service import JarvisArtServiceManager
                     state = JarvisArtServiceManager(config.jarvisart_root, config.jarvisart_endpoint).status().state
-                return f"JarvisArt Local · {state} · 本地，无云端费用"
+                return f"JarvisArt Local GGUF · {state} · 本地，无云端费用 · {self._preview_quality_label()}预览"
+            if config.provider_id == "mock":
+                return "⚠ Offline Mock（仅开发测试；不会分析照片）"
             return descriptor.display_name
         budget = self.usage_manager.status()
         if budget.mode == "disabled":

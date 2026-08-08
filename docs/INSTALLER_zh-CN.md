@@ -33,7 +33,7 @@ AI Lightroom 同时提供安装包与 ZIP 绿色版。两者包含相同的应�
 
 ```powershell
 .\scripts\build_windows.ps1
-.\scripts\build_installer.ps1 -Version 1.0.1
+.\scripts\build_installer.ps1 -Version 1.0.2
 ```
 
-生成文件位于 `releases\AI-Lightroom-1.0.1-Setup.exe`。脚本会检查是否先有可用的 PyInstaller 输出；不会把 `.env`、Windows 凭据、用户照片或 JarvisArt 模型收入安装包。
+生成文件位于 `releases\AI-Lightroom-1.0.2-Setup.exe`。脚本会检查是否先有可用的 PyInstaller 输出；不会把 `.env`、Windows 凭据、用户照片或 JarvisArt 模型收入安装包。

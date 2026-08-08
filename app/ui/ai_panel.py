@@ -99,6 +99,9 @@ class AIPanel(QWidget):
 
     def set_provider_status(self, text: str) -> None:
         self.provider_label.setText(f"AI：{text}")
+        is_warning = "Mock" in text or text.lstrip().startswith("⚠")
+        color = "#e2a34f" if is_warning else "#858b92"
+        self.provider_label.setStyleSheet(f"color: {color}; font-size: 9pt;")
 
     def set_result_info(self, provider: str, has_details: bool) -> None:
         self.set_provider_status(f"本次规划：{provider}")

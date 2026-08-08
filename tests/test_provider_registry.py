@@ -150,14 +150,22 @@ def test_settings_shows_jarvisart_local_runtime_mode_and_privacy_status(qtbot, t
     manager = SettingsManager()
     manager.store = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
     manager.store.setValue("ai/active_provider", "jarvisart_local")
+    manager.store.setValue("ai/jarvisart_mode", "mock")
     dialog = SettingsDialog(manager)
     qtbot.addWidget(dialog)
     assert dialog.provider.currentData() == "jarvisart_local"
     assert dialog.jarvisart_mode.isEnabled()
-    assert "Mock Native Ready" in dialog.jarvisart_status.text()
+    assert "不会读取、理解或分析当前照片" in dialog.jarvisart_status.text()
     assert not dialog.test_button.isEnabled()
     dialog.jarvisart_mode.setCurrentIndex(dialog.jarvisart_mode.findData("real"))
     assert dialog._current_config().local_mode == "real"
+
+
+def test_fresh_jarvisart_settings_default_to_real_native_mode(tmp_path):
+    manager = SettingsManager()
+    manager.store = QSettings(str(tmp_path / "fresh.ini"), QSettings.Format.IniFormat)
+    manager.store.setValue("ai/active_provider", "jarvisart_local")
+    assert manager.runtime().jarvisart_mode == "real"
 
 
 def test_custom_headers_reject_authorization_overrides_and_accept_safe_values():

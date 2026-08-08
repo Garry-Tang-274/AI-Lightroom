@@ -57,7 +57,7 @@ def test_mask_layer_ui_and_state_stay_synchronized(qtbot, tmp_path):
     assert window.state.masks[0].adjustments.exposure == -0.4
 
 
-def test_offline_ai_command_updates_visible_state(qtbot, tmp_path, monkeypatch):
+def test_offline_mock_is_blocked_before_it_can_update_visible_state(qtbot, tmp_path, monkeypatch):
     source = tmp_path / "ai-source.jpg"
     pixels = np.zeros((180, 300, 3), dtype=np.uint8)
     pixels[:90] = (80, 145, 220)
@@ -67,15 +67,13 @@ def test_offline_ai_command_updates_visible_state(qtbot, tmp_path, monkeypatch):
     qtbot.addWidget(window)
     window.open_image(str(source))
     monkeypatch.setattr(window.settings_manager, "runtime", lambda: RuntimeSettings(provider="mock"))
-    monkeypatch.setattr(window.settings_manager, "gemini_api_key", lambda: "")
+    called: list[bool] = []
+    monkeypatch.setattr(window, "_show_offline_mock_notice", lambda: called.append(True))
     window._run_ai_edit("做出轻微电影感，天空压一点，但不要把地面搞暗")
-    qtbot.waitUntil(lambda: window._ai_worker is None, timeout=5000)
-    assert window.state.basic.contrast > 0
-    assert any(layer.type.value == "sky" for layer in window.state.masks)
-    assert window.adjustments.controls["contrast"].slider.value() > 0
-    assert len(window.history.entries) == 2
-    window.undo()
+    assert called == [True]
+    assert window._ai_worker is None
     assert window.state.is_pristine()
+    assert len(window.history.entries) == 1
 
 
 def test_budget_limit_blocks_cloud_worker_without_sending(qtbot, tmp_path, monkeypatch):

@@ -32,6 +32,7 @@ class AIProcessResult:
     provider_name: str
     vision_calls: int
     unsupported_operations: list[str]
+    analysis_preview_max_edge: int
 
     @property
     def final_plan(self) -> EditingPlan:
@@ -49,7 +50,7 @@ class AIOrchestrator:
         max_vision_calls: int = 2,
     ) -> None:
         self.provider = provider
-        self.preview_size = max(512, min(2048, preview_size))
+        self.preview_size = max(512, min(4096, preview_size))
         self.jpeg_quality = max(70, min(95, jpeg_quality))
         self.reinspection_enabled = reinspection_enabled
         self.max_vision_calls = max(1, min(2, max_vision_calls))
@@ -106,6 +107,7 @@ class AIOrchestrator:
             provider_name=self.provider.name,
             vision_calls=vision_calls,
             unsupported_operations=list(dict.fromkeys(unsupported)),
+            analysis_preview_max_edge=self.preview_size,
         )
 
     @staticmethod

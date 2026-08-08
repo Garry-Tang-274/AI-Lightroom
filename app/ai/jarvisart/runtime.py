@@ -34,18 +34,18 @@ class JarvisArtRuntime(ABC):
 
 
 class RealJarvisArtRuntimeStub(JarvisArtRuntime):
-    """Future official local-model hook; never falls back to a cloud provider."""
+    """Local GGUF/native hook; never falls back to a cloud provider."""
 
     @property
     def status(self) -> JarvisArtRuntimeStatus:
-        return JarvisArtRuntimeStatus("real", "Real Model Not Installed", "官方 JarvisArt 本地模型尚未安装。")
+        return JarvisArtRuntimeStatus("real", "Local GGUF Model Not Installed", "本地 JarvisArt GGUF / 原生运行环境尚未安装。")
 
     def infer(self, preview_jpeg: bytes | None, instruction: str, state: EditorState) -> JarvisArtNativePlan:
         raise AIRequestError(
             "JarvisArt 本地模型未安装",
-            "Real Native 模式需要先安装官方 JarvisArt-1208 权重和本地运行环境；本次没有发送云端请求。",
-            provider="JarvisArt Local",
-            model="JarvisArt-1208",
+            "Local GGUF 模式需要先安装用户自己的 JarvisArt 兼容 GGUF 和本地运行环境；本次没有发送云端请求。",
+            provider="JarvisArt Local GGUF",
+            model="qwen2_vl",
             request_sent=False,
         )
 
@@ -53,8 +53,9 @@ class RealJarvisArtRuntimeStub(JarvisArtRuntime):
 class LocalJarvisArtRuntime(JarvisArtRuntime):
     """Localhost client for the separately installed JarvisArt service.
 
-    It sends a temporary, reduced JPEG preview through loopback only. The
-    original image, model weights, and the ML runtime remain outside this app.
+    It sends a temporary, configured JPEG preview through loopback only. The
+    original image, model weights, and the GGUF/native runtime remain outside
+    this app.
     """
 
     def __init__(self, root: str = "", endpoint: str = "http://127.0.0.1:8765", *, auto_start: bool = True, manager: JarvisArtServiceManager | None = None) -> None:
@@ -76,14 +77,14 @@ class LocalJarvisArtRuntime(JarvisArtRuntime):
 
     def infer(self, preview_jpeg: bytes | None, instruction: str, state: EditorState) -> JarvisArtNativePlan:
         if not preview_jpeg:
-            raise AIRequestError("JarvisArt 缺少预览图", "JarvisArt 本地视觉分析需要当前缩小预览图。", provider="JarvisArt Local", model="JarvisArt-1208")
+            raise AIRequestError("JarvisArt 缺少预览图", "JarvisArt 本地视觉分析需要当前 JPEG 预览图。", provider="JarvisArt Local GGUF", model="qwen2_vl")
         status = self.manager.status()
         if status.state != "Ready":
             if not self.auto_start:
-                raise AIRequestError("JarvisArt 服务离线", status.message, provider="JarvisArt Local", model=status.model or "JarvisArt-1208")
+                raise AIRequestError("JarvisArt 服务离线", status.message, provider="JarvisArt Local GGUF", model=status.model or "qwen2_vl")
             status = self.manager.start()
             if status.state != "Ready":
-                raise AIRequestError("JarvisArt 启动失败", status.message, provider="JarvisArt Local", model=status.model or "JarvisArt-1208")
+                raise AIRequestError("JarvisArt 启动失败", status.message, provider="JarvisArt Local GGUF", model=status.model or "qwen2_vl")
         temp_path: Path | None = None
         try:
             with NamedTemporaryFile(prefix="ai-lightroom-jarvisart-", suffix=".jpg", delete=False) as handle:
@@ -101,9 +102,9 @@ class LocalJarvisArtRuntime(JarvisArtRuntime):
                 lua = response.read().decode("utf-8", errors="replace")
         except HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")[:800]
-            raise AIRequestError("JarvisArt 本地服务错误", detail or f"HTTP {exc.code}", provider="JarvisArt Local", model=status.model or "JarvisArt-1208", http_status=exc.code) from exc
+            raise AIRequestError("JarvisArt 本地服务错误", detail or f"HTTP {exc.code}", provider="JarvisArt Local GGUF", model=status.model or "qwen2_vl", http_status=exc.code) from exc
         except (URLError, OSError, TimeoutError) as exc:
-            raise AIRequestError("JarvisArt 服务离线或超时", "无法完成本地 JarvisArt 推理；照片未发生任何修改。", provider="JarvisArt Local", model=status.model or "JarvisArt-1208", local_exception=type(exc).__name__) from exc
+            raise AIRequestError("JarvisArt 服务离线或超时", "无法完成本地 JarvisArt GGUF 推理；照片未发生任何修改。", provider="JarvisArt Local GGUF", model=status.model or "qwen2_vl", local_exception=type(exc).__name__) from exc
         finally:
             if temp_path is not None:
                 try:
@@ -140,7 +141,7 @@ def parse_jarvisart_lua(lua: str) -> JarvisArtNativePlan:
         elif parameter not in {"ProcessVersion", "Temperature", "Tint", "WhiteBalance"}:
             unsupported.append({"operation": parameter, "reason": "当前 AI Lightroom 本地渲染器不支持该 JarvisArt Lightroom 参数"})
     if not scalar_pairs:
-        raise AIRequestError("JarvisArt 原生输出无效", "本地 JarvisArt 服务未返回可解析的 Lightroom 参数。", provider="JarvisArt Local", model="JarvisArt-1208")
+        raise AIRequestError("JarvisArt 原生输出无效", "本地 JarvisArt GGUF 服务未返回可解析的 Lightroom 参数。", provider="JarvisArt Local GGUF", model="qwen2_vl")
     return JarvisArtNativePlan.model_validate({
         "summary": "JarvisArt 已生成本地 Lightroom 调整方案。",
         "reasoning_summary": "已将 JarvisArt 返回的 Lightroom 全局参数安全映射到当前编辑器。",
@@ -153,14 +154,14 @@ def parse_jarvisart_lua(lua: str) -> JarvisArtNativePlan:
 class MockJarvisArtRuntime(JarvisArtRuntime):
     @property
     def status(self) -> JarvisArtRuntimeStatus:
-        return JarvisArtRuntimeStatus("mock", "Mock Native Ready", "本地 fixture 模拟原生 JarvisArt 输出；不上传照片，也不产生云端费用。")
+        return JarvisArtRuntimeStatus("mock", "Offline Mock Test", "本地 fixture 只用于开发测试；不会读取、理解或分析当前照片。")
 
     def infer(self, preview_jpeg: bytes | None, instruction: str, state: EditorState) -> JarvisArtNativePlan:
         lowered = instruction.lower()
         road = any(term in lowered for term in ("road", "公路", "道路", "荒漠"))
         plan = {
-            "summary": "本地 JarvisArt Mock 已生成可执行调色方案。",
-            "reasoning_summary": "以克制的局部对比和低饱和为主，所有输出均通过本地适配器验证。",
+            "summary": "离线 JarvisArt Mock 测试参数（不代表真实图片分析）。",
+            "reasoning_summary": "这是固定 fixture，仅用于开发链路验证；它没有查看当前照片或理解摄影意图。",
             "global_adjustments": [
                 {"parameter": "Exposure2012", "value": -0.22 if road else 0.12},
                 {"parameter": "Contrast2012", "value": 10 if road else 6},

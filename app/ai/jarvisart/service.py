@@ -66,7 +66,7 @@ class JarvisArtServiceManager:
         model = str(health.get("model", ""))
         detail = str(health.get("model_detail", ""))
         if health.get("status") == "ok" and model_status == "online":
-            return JarvisArtServiceStatus("Ready", "JarvisArt 本地 GPU 服务已就绪。", model, str(self.root or ""), self.endpoint)
+            return JarvisArtServiceStatus("Ready", "JarvisArt 本地 GGUF GPU 服务已就绪。", model, str(self.root or ""), self.endpoint)
         return JarvisArtServiceStatus("Loading", detail or "JarvisArt 模型正在启动。", model, str(self.root or ""), self.endpoint)
 
     def start(self, timeout_seconds: float = 180.0) -> JarvisArtServiceStatus:
