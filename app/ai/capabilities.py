@@ -25,6 +25,8 @@ class ProviderDescriptor:
     api_key_environment: str = ""
     capabilities: ProviderCapabilities = ProviderCapabilities()
     is_custom: bool = False
+    cost_type: str = "cloud_api"
+    privacy_type: str = "cloud_preview"
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,3 +38,8 @@ class ProviderConfig:
     capabilities: ProviderCapabilities = ProviderCapabilities()
     # Local providers may expose several runtimes without becoming cloud services.
     local_mode: str = "mock"
+    custom_organization: str = ""
+    custom_headers: str = ""
+    jarvisart_root: str = ""
+    jarvisart_endpoint: str = "http://127.0.0.1:8765"
+    jarvisart_auto_start: bool = True

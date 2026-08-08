@@ -45,6 +45,8 @@ class OpenAICompatibleProvider(AIProvider):
         on_request_started=None,
         on_result=None,
         timeout_seconds: float = 45.0,
+        organization: str = "",
+        custom_headers: str = "",
     ) -> None:
         if not api_key and client is None:
             raise ValueError(f"{display_name} API Key 为空")
@@ -59,12 +61,17 @@ class OpenAICompatibleProvider(AIProvider):
         # retries, while the provider-specific deadline can accommodate a
         # genuine multimodal inference request.
         self.timeout_seconds = float(timeout_seconds)
-        self.client = client or OpenAI(
-            api_key=api_key,
-            base_url=self.base_url,
-            timeout=self.timeout_seconds,
-            max_retries=0,
-        )
+        self.organization = organization.strip()
+        self.custom_headers = _parse_headers(custom_headers)
+        client_options = {
+            "api_key": api_key, "base_url": self.base_url,
+            "timeout": self.timeout_seconds, "max_retries": 0,
+        }
+        if self.organization:
+            client_options["organization"] = self.organization
+        if self.custom_headers:
+            client_options["default_headers"] = self.custom_headers
+        self.client = client or OpenAI(**client_options)
         self.system_prompt = system_prompt
         self.on_request_started = on_request_started
         self.on_result = on_result
@@ -173,3 +180,18 @@ def _safe_json_shape(text: str) -> dict[str, object]:
         "keys": sorted(str(key) for key in value),
         "types": {str(key): type(item).__name__ for key, item in value.items()},
     }
+
+
+def _parse_headers(value: str) -> dict[str, str]:
+    if not value.strip():
+        return {}
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise ValueError("Custom headers 必须是 JSON 对象。") from exc
+    if not isinstance(parsed, dict) or not all(isinstance(key, str) and isinstance(item, str) for key, item in parsed.items()):
+        raise ValueError("Custom headers 必须是字符串键和值组成的 JSON 对象。")
+    forbidden = {"authorization", "api-key", "x-api-key"}
+    if any(key.lower() in forbidden for key in parsed):
+        raise ValueError("Custom headers 不能覆盖授权头；请使用 API Key 字段。")
+    return parsed

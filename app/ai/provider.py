@@ -26,6 +26,12 @@ class AIProvider(ABC):
     def plan(self, request: PlanningRequest) -> EditingPlan:
         raise NotImplementedError
 
+    def validate_config(self) -> None:
+        """Raise a clear error only when this provider's configuration is invalid."""
+
+    def create_editing_plan(self, request: PlanningRequest) -> EditingPlan:
+        return self.plan(request)
+
     def request(self, request: PlanningRequest) -> EditingPlan:
         return self.plan(request)
 

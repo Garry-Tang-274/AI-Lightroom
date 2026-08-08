@@ -2,6 +2,15 @@ from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
+
+# Support both ``python -m app.main`` and the documented
+# ``python app/main.py`` source-entry command. PyInstaller supplies its own
+# import path, so this only affects direct source execution.
+if __package__ in {None, ""}:
+    project_root = Path(__file__).resolve().parent.parent
+    if str(project_root) not in sys.path:
+        sys.path.insert(0, str(project_root))
 
 from PySide6.QtCore import QTimer, Qt
 from PySide6.QtGui import QFont, QIcon
@@ -11,6 +20,9 @@ from app.ui.main_window import MainWindow
 from app.ui.theme import APP_STYLESHEET
 from app.utils.logging_setup import configure_logging, install_exception_hook
 from app.utils.paths import resource_path
+
+
+__version__ = "1.0.0"
 
 
 def package_self_check() -> int:

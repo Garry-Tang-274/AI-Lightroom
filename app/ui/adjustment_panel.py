@@ -6,6 +6,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QFormLayout,
     QComboBox,
+    QDoubleSpinBox,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -54,6 +55,10 @@ class NoWheelSlider(QSlider):
     def wheelEvent(self, event) -> None:  # noqa: N802
         event.ignore()
 
+    def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802
+        self.setValue(0)
+        event.accept()
+
 
 class ParameterSlider(QWidget):
     value_changed = Signal(str, float)
@@ -64,13 +69,17 @@ class ParameterSlider(QWidget):
         super().__init__(parent)
         self.spec = spec
         self.label = QLabel(spec.label)
-        self.value_label = QLabel("0")
-        self.value_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        self.value_label.setMinimumWidth(42)
+        self.value_label = QDoubleSpinBox()
+        self.value_label.setRange(spec.minimum / spec.scale, spec.maximum / spec.scale)
+        self.value_label.setDecimals(2 if spec.scale != 1 else 0)
+        self.value_label.setSingleStep(0.01 if spec.scale != 1 else 1.0)
+        self.value_label.setMinimumWidth(76)
+        self.value_label.setAlignment(Qt.AlignmentFlag.AlignRight)
         self.slider = NoWheelSlider(Qt.Orientation.Horizontal)
         self.slider.setRange(spec.minimum, spec.maximum)
         self.slider.setValue(0)
         self.slider.valueChanged.connect(self._emit_value)
+        self.value_label.valueChanged.connect(self._spin_value_changed)
         self.slider.sliderPressed.connect(lambda: self.interaction_started.emit(self.spec.key))
         self.slider.sliderReleased.connect(lambda: self.interaction_finished.emit(self.spec.key))
 
@@ -87,7 +96,15 @@ class ParameterSlider(QWidget):
 
     def _emit_value(self, raw: int) -> None:
         value = raw / self.spec.scale
-        self.value_label.setText(f"{value:+.2f}" if self.spec.scale != 1 else f"{value:+.0f}")
+        self.value_label.blockSignals(True)
+        self.value_label.setValue(value)
+        self.value_label.blockSignals(False)
+        self.value_changed.emit(self.spec.key, value)
+
+    def _spin_value_changed(self, value: float) -> None:
+        self.slider.blockSignals(True)
+        self.slider.setValue(round(value * self.spec.scale))
+        self.slider.blockSignals(False)
         self.value_changed.emit(self.spec.key, value)
 
     def set_value(self, value: float) -> None:
@@ -97,7 +114,9 @@ class ParameterSlider(QWidget):
         self._update_label(value)
 
     def _update_label(self, value: float) -> None:
-        self.value_label.setText(f"{value:+.2f}" if self.spec.scale != 1 else f"{value:+.0f}")
+        self.value_label.blockSignals(True)
+        self.value_label.setValue(value)
+        self.value_label.blockSignals(False)
 
 
 class AdjustmentPanel(QScrollArea):

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+import platform
+import subprocess
 
-from PySide6.QtCore import QSettings, QThreadPool, QTimer, Qt
-from PySide6.QtGui import QAction, QKeySequence
+from PySide6.QtCore import QSettings, QThreadPool, QTimer, Qt, QUrl
+from PySide6.QtGui import QAction, QKeySequence, QDesktopServices
 from PySide6.QtWidgets import (
     QFileDialog,
     QInputDialog,
@@ -50,6 +52,10 @@ from app.ai.provider_registry import provider_registry
 from app.core.watermarks import WatermarkLibrary
 from app.core.session_store import SessionStore
 from app.core.masks import generate_mask, mask_confidence
+from app.utils.logging_setup import configure_logging
+
+
+APP_VERSION = "1.0.0"
 
 
 class MainWindow(QMainWindow):
@@ -58,6 +64,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("AI Lightroom")
         self.resize(1480, 920)
         self.setMinimumSize(1050, 680)
+        self.setAcceptDrops(True)
         self.settings_manager = SettingsManager()
         self.runtime_settings = self.settings_manager.runtime()
         self.settings = self.settings_manager.store
@@ -106,9 +113,13 @@ class MainWindow(QMainWindow):
         self.open_action.setShortcut(QKeySequence.StandardKey.Open)
         self.open_action.triggered.connect(self.open_image_dialog)
         self.export_action = QAction("导出…", self)
-        self.export_action.setShortcut(QKeySequence("Ctrl+Shift+E"))
+        self.export_action.setShortcut(QKeySequence.StandardKey.Save)
         self.export_action.setEnabled(False)
         self.export_action.triggered.connect(self.export_image_dialog)
+        self.export_as_action = QAction("另存/导出…", self)
+        self.export_as_action.setShortcut(QKeySequence("Ctrl+Shift+S"))
+        self.export_as_action.setEnabled(False)
+        self.export_as_action.triggered.connect(self.export_image_dialog)
         self.exit_action = QAction("退出", self)
         self.exit_action.setShortcut(QKeySequence.StandardKey.Quit)
         self.exit_action.triggered.connect(self.close)
@@ -116,6 +127,7 @@ class MainWindow(QMainWindow):
         self.fit_action.setShortcut(QKeySequence("F"))
         self.fit_action.triggered.connect(lambda: self.image_view.fit_to_view())
         self.actual_action = QAction("100%", self)
+        self.actual_action.setShortcut(QKeySequence("1"))
         self.actual_action.triggered.connect(lambda: self.image_view.actual_size())
         self.undo_action = QAction("撤销", self)
         self.undo_action.setShortcut(QKeySequence.StandardKey.Undo)
@@ -144,6 +156,9 @@ class MainWindow(QMainWindow):
         file_menu = self.menuBar().addMenu("文件")
         file_menu.addAction(self.open_action)
         file_menu.addAction(self.export_action)
+        file_menu.addAction(self.export_as_action)
+        self.recent_menu = file_menu.addMenu("最近文件")
+        self._refresh_recent_menu()
         file_menu.addSeparator()
         file_menu.addAction(self.settings_action)
         file_menu.addSeparator()
@@ -161,6 +176,11 @@ class MainWindow(QMainWindow):
         view_menu.addAction(self.actual_action)
         view_menu.addAction(self.before_action)
         help_menu = self.menuBar().addMenu("帮助")
+        open_logs = help_menu.addAction("打开日志文件夹")
+        open_logs.triggered.connect(self._open_logs_folder)
+        diagnostic = help_menu.addAction("复制诊断信息")
+        diagnostic.triggered.connect(self._copy_diagnostic_info)
+        help_menu.addSeparator()
         about = help_menu.addAction("关于 AI Lightroom")
         about.triggered.connect(self._show_about)
 
@@ -306,9 +326,51 @@ class MainWindow(QMainWindow):
         self.adjustments.set_enabled_for_image(True)
         self.ai_panel.set_ready(True)
         self.export_action.setEnabled(True)
+        self.export_as_action.setEnabled(True)
+        self._add_recent_file(loaded.path)
         self._refresh_ai_status()
         if not self.state.is_pristine():
             self._queue_preview_render()
+
+    def dragEnterEvent(self, event) -> None:  # noqa: N802
+        urls = event.mimeData().urls() if event.mimeData().hasUrls() else []
+        if any(url.isLocalFile() and Path(url.toLocalFile()).suffix.lower() in {".jpg", ".jpeg", ".png"} for url in urls):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event) -> None:  # noqa: N802
+        for url in event.mimeData().urls():
+            if url.isLocalFile() and Path(url.toLocalFile()).suffix.lower() in {".jpg", ".jpeg", ".png"}:
+                self.open_image(url.toLocalFile())
+                event.acceptProposedAction()
+                return
+        event.ignore()
+
+    def _recent_files(self) -> list[str]:
+        stored = self.settings.value("recent_files", [])
+        values = [str(item) for item in (stored if isinstance(stored, list) else [stored]) if item]
+        return [path for path in values if Path(path).is_file()][:10]
+
+    def _add_recent_file(self, path: Path) -> None:
+        ordered = [str(path.resolve())] + [item for item in self._recent_files() if Path(item).resolve() != path.resolve()]
+        self.settings.setValue("recent_files", ordered[:10])
+        self.settings.sync()
+        self._refresh_recent_menu()
+
+    def _refresh_recent_menu(self) -> None:
+        if not hasattr(self, "recent_menu"):
+            return
+        self.recent_menu.clear()
+        recent = self._recent_files()
+        if not recent:
+            action = self.recent_menu.addAction("暂无最近文件")
+            action.setEnabled(False)
+            return
+        for filename in recent:
+            action = self.recent_menu.addAction(Path(filename).name)
+            action.setToolTip(filename)
+            action.triggered.connect(lambda _checked=False, value=filename: self.open_image(value))
 
     def _set_basic_adjustment(self, key: str, value: float) -> None:
         if self.preview_source is None:
@@ -623,6 +685,14 @@ class MainWindow(QMainWindow):
         self._flush_history()
         if self.loaded_image is not None:
             self.session_store.save(self.loaded_image.path, self.state, self.history)
+        try:
+            from app.ai.jarvisart.service import JarvisArtServiceManager
+            JarvisArtServiceManager(
+                self.runtime_settings.jarvisart_root,
+                self.runtime_settings.jarvisart_endpoint,
+            ).stop_owned()
+        except Exception:
+            pass
         super().closeEvent(event)
 
     def export_image_dialog(self) -> None:
@@ -648,6 +718,7 @@ class MainWindow(QMainWindow):
             if not accepted:
                 return
         self.export_action.setEnabled(False)
+        self.export_as_action.setEnabled(False)
         self.statusBar().showMessage("正在以原始分辨率导出…")
         metadata = {
             "icc_profile": self.loaded_image.icc_profile,
@@ -662,11 +733,13 @@ class MainWindow(QMainWindow):
 
     def _export_finished(self, filename: str) -> None:
         self.export_action.setEnabled(True)
+        self.export_as_action.setEnabled(True)
         self._export_worker = None
         self.statusBar().showMessage(f"已导出：{filename}", 8000)
 
     def _export_failed(self, details: str) -> None:
         self.export_action.setEnabled(True)
+        self.export_as_action.setEnabled(True)
         self._export_worker = None
         self.statusBar().showMessage("导出失败")
         last_line = next((line for line in reversed(details.splitlines()) if line.strip()), "未知错误")
@@ -895,7 +968,11 @@ class MainWindow(QMainWindow):
         descriptor = provider_registry.descriptor(config.provider_id)
         if not descriptor.requires_api_key:
             if config.provider_id == "jarvisart_local":
-                state = "Mock Native Ready" if config.local_mode == "mock" else "Real Model Not Installed"
+                if config.local_mode == "mock":
+                    state = "Mock Native Ready"
+                else:
+                    from app.ai.jarvisart.service import JarvisArtServiceManager
+                    state = JarvisArtServiceManager(config.jarvisart_root, config.jarvisart_endpoint).status().state
                 return f"JarvisArt Local · {state} · 本地，无云端费用"
             return descriptor.display_name
         budget = self.usage_manager.status()
@@ -903,7 +980,7 @@ class MainWindow(QMainWindow):
             return "Cloud disabled"
         if self.settings_manager.has_provider_key(config.provider_id):
             return f"{config.display_name} · {config.model}"
-        return f"未配置 {config.display_name} API Key"
+        return "尚未配置 AI Provider（可在设置中启用云端服务或 JarvisArt Local）"
 
     def _cloud_provider_configured(self) -> bool:
         descriptor = provider_registry.descriptor(self.runtime_settings.provider)
@@ -919,5 +996,32 @@ class MainWindow(QMainWindow):
         QMessageBox.about(
             self,
             "关于 AI Lightroom",
-            "AI Lightroom 0.1\n非破坏式桌面照片编辑器",
+            f"AI Lightroom {APP_VERSION}\n\n"
+            "一个支持传统非破坏式照片编辑与可选 AI 调色计划的桌面应用。\n"
+            "License: MIT\n"
+            "JarvisArt 是独立可选组件，遵循其自身许可证；AI Lightroom 不隶属于 Adobe。\n"
+            "GitHub repository: configured after public release.",
         )
+
+    def _open_logs_folder(self) -> None:
+        log_path = configure_logging()
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(log_path.parent)))
+
+    def _copy_diagnostic_info(self) -> None:
+        provider = self.runtime_settings.provider_config
+        gpu = "Unavailable"
+        try:
+            gpu = subprocess.check_output(["nvidia-smi", "--query-gpu=name,driver_version", "--format=csv,noheader"], text=True, timeout=3).strip() or gpu
+        except (OSError, subprocess.SubprocessError):
+            pass
+        lines = [
+            f"AI Lightroom {APP_VERSION}",
+            f"OS: {platform.system()} {platform.release()}",
+            f"Python: {platform.python_version()}",
+            f"Provider: {provider.display_name}",
+            f"Model: {provider.model}",
+            f"GPU: {gpu}",
+        ]
+        from PySide6.QtWidgets import QApplication
+        QApplication.clipboard().setText("\n".join(lines))
+        self.statusBar().showMessage("已复制不含密钥、指令和照片路径的诊断信息。", 5000)

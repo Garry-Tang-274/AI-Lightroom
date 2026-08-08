@@ -12,6 +12,7 @@ htmlcov/
 build/
 dist/
 release/
+releases/
 external/
 *.spec.tmp
 cache/
@@ -28,6 +29,7 @@ temp/
 *.dng
 !assets/*.png
 !assets/*.jpg
+!docs/assets/*.png
 !.github/
 .idea/
 .vscode/

@@ -2,9 +2,16 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+import json
+import re
+from pathlib import Path
+from tempfile import NamedTemporaryFile
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 from app.ai.errors import AIRequestError
 from app.ai.jarvisart.schemas import JarvisArtNativePlan
+from app.ai.jarvisart.service import JarvisArtServiceManager
 from app.core.editor_state import EditorState
 
 
@@ -41,6 +48,106 @@ class RealJarvisArtRuntimeStub(JarvisArtRuntime):
             model="JarvisArt-1208",
             request_sent=False,
         )
+
+
+class LocalJarvisArtRuntime(JarvisArtRuntime):
+    """Localhost client for the separately installed JarvisArt service.
+
+    It sends a temporary, reduced JPEG preview through loopback only. The
+    original image, model weights, and the ML runtime remain outside this app.
+    """
+
+    def __init__(self, root: str = "", endpoint: str = "http://127.0.0.1:8765", *, auto_start: bool = True, manager: JarvisArtServiceManager | None = None) -> None:
+        self.manager = manager or JarvisArtServiceManager(root, endpoint)
+        self.auto_start = auto_start
+
+    @property
+    def status(self) -> JarvisArtRuntimeStatus:
+        status = self.manager.status()
+        return JarvisArtRuntimeStatus("real", status.state, status.message)
+
+    def start(self) -> JarvisArtRuntimeStatus:
+        status = self.manager.start()
+        return JarvisArtRuntimeStatus("real", status.state, status.message)
+
+    def stop(self) -> JarvisArtRuntimeStatus:
+        status = self.manager.stop_owned()
+        return JarvisArtRuntimeStatus("real", status.state, status.message)
+
+    def infer(self, preview_jpeg: bytes | None, instruction: str, state: EditorState) -> JarvisArtNativePlan:
+        if not preview_jpeg:
+            raise AIRequestError("JarvisArt 缺少预览图", "JarvisArt 本地视觉分析需要当前缩小预览图。", provider="JarvisArt Local", model="JarvisArt-1208")
+        status = self.manager.status()
+        if status.state != "Ready":
+            if not self.auto_start:
+                raise AIRequestError("JarvisArt 服务离线", status.message, provider="JarvisArt Local", model=status.model or "JarvisArt-1208")
+            status = self.manager.start()
+            if status.state != "Ready":
+                raise AIRequestError("JarvisArt 启动失败", status.message, provider="JarvisArt Local", model=status.model or "JarvisArt-1208")
+        temp_path: Path | None = None
+        try:
+            with NamedTemporaryFile(prefix="ai-lightroom-jarvisart-", suffix=".jpg", delete=False) as handle:
+                handle.write(preview_jpeg)
+                temp_path = Path(handle.name)
+            request = Request(
+                self.manager.endpoint + "/develop_settings",
+                data=json.dumps({"photo_path": str(temp_path), "prompt": instruction}).encode("utf-8"),
+                headers={"Content-Type": "application/json", "Accept": "text/plain"}, method="POST",
+            )
+            # Local quantized models can take several minutes on consumer
+            # hardware.  This runs in the dedicated AI worker, so favour a
+            # reliable local result over a cloud-style short request deadline.
+            with urlopen(request, timeout=300.0) as response:
+                lua = response.read().decode("utf-8", errors="replace")
+        except HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")[:800]
+            raise AIRequestError("JarvisArt 本地服务错误", detail or f"HTTP {exc.code}", provider="JarvisArt Local", model=status.model or "JarvisArt-1208", http_status=exc.code) from exc
+        except (URLError, OSError, TimeoutError) as exc:
+            raise AIRequestError("JarvisArt 服务离线或超时", "无法完成本地 JarvisArt 推理；照片未发生任何修改。", provider="JarvisArt Local", model=status.model or "JarvisArt-1208", local_exception=type(exc).__name__) from exc
+        finally:
+            if temp_path is not None:
+                try:
+                    temp_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+        return parse_jarvisart_lua(lua)
+
+
+def parse_jarvisart_lua(lua: str) -> JarvisArtNativePlan:
+    """Parse the scalar Lightroom Lua returned by the existing local bridge.
+
+    This deliberately accepts only a compact safe subset. Unknown Lightroom
+    settings remain visible as unsupported operations instead of being guessed.
+    """
+    source = lua.removeprefix("return").strip()
+    scalar_pairs = re.findall(r'(?:\["([^"\\]+)"\]|([A-Za-z_][A-Za-z0-9_]*))\s*=\s*(-?\d+(?:\.\d+)?)', source)
+    hsl: dict[str, dict[str, float]] = {}
+    global_adjustments: list[dict[str, object]] = []
+    unsupported: list[dict[str, str]] = []
+    known = {
+        "Exposure2012", "Contrast2012", "Highlights2012", "Shadows2012", "Whites2012", "Blacks2012",
+        "IncrementalTemperature", "IncrementalTint", "Saturation", "Vibrance", "Clarity2012", "Texture", "Dehaze", "Sharpness", "PostCropVignetteAmount",
+    }
+    for quoted, bare, raw_value in scalar_pairs:
+        parameter = quoted or bare
+        value = float(raw_value)
+        match = re.fullmatch(r"(Hue|Saturation|Luminance)Adjustment(Red|Orange|Yellow|Green|Aqua|Blue|Purple|Magenta)", parameter)
+        if match:
+            field = {"Hue": "hue", "Saturation": "saturation", "Luminance": "luminance"}[match.group(1)]
+            hsl.setdefault(match.group(2).lower(), {})[field] = value
+        elif parameter in known:
+            global_adjustments.append({"parameter": parameter, "value": value})
+        elif parameter not in {"ProcessVersion", "Temperature", "Tint", "WhiteBalance"}:
+            unsupported.append({"operation": parameter, "reason": "当前 AI Lightroom 本地渲染器不支持该 JarvisArt Lightroom 参数"})
+    if not scalar_pairs:
+        raise AIRequestError("JarvisArt 原生输出无效", "本地 JarvisArt 服务未返回可解析的 Lightroom 参数。", provider="JarvisArt Local", model="JarvisArt-1208")
+    return JarvisArtNativePlan.model_validate({
+        "summary": "JarvisArt 已生成本地 Lightroom 调整方案。",
+        "reasoning_summary": "已将 JarvisArt 返回的 Lightroom 全局参数安全映射到当前编辑器。",
+        "global_adjustments": global_adjustments,
+        "hsl_adjustments": [{"color": color, **values} for color, values in hsl.items()],
+        "curves": [], "local_regions": [], "unsupported_operations": unsupported, "confidence": 0.78,
+    })
 
 
 class MockJarvisArtRuntime(JarvisArtRuntime):

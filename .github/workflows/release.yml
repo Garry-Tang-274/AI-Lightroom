@@ -1,0 +1,26 @@
+name: Build release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version without v
+        required: true
+        default: '1.0.0'
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -r requirements.txt
+      - run: .\scripts\build_windows.ps1
+      - run: .\scripts\package_release.ps1 -Version ${{ inputs.version }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AI-Lightroom-${{ inputs.version }}-windows-x64
+          path: releases/*.zip

@@ -3,7 +3,7 @@ from __future__ import annotations
 from app.ai.capabilities import ProviderConfig
 from app.ai.errors import AIRequestError
 from app.ai.jarvisart.adapter import JarvisArtAdapter
-from app.ai.jarvisart.runtime import JarvisArtRuntime, MockJarvisArtRuntime, RealJarvisArtRuntimeStub
+from app.ai.jarvisart.runtime import JarvisArtRuntime, LocalJarvisArtRuntime, MockJarvisArtRuntime
 from app.ai.provider import AIProvider, PlanningRequest
 from app.ai.schemas import EditingPlan
 from pydantic import ValidationError
@@ -11,10 +11,14 @@ from pydantic import ValidationError
 
 class JarvisArtProvider(AIProvider):
     id = "jarvisart_local"
+    requires_visual_input = True
 
     def __init__(self, config: ProviderConfig, *, runtime: JarvisArtRuntime | None = None, **_kwargs) -> None:
         self.config = config
-        self.runtime = runtime or (RealJarvisArtRuntimeStub() if config.local_mode == "real" else MockJarvisArtRuntime())
+        self.runtime = runtime or (
+            LocalJarvisArtRuntime(config.jarvisart_root, config.jarvisart_endpoint, auto_start=config.jarvisart_auto_start)
+            if config.local_mode == "real" else MockJarvisArtRuntime()
+        )
         self.name = f"JarvisArt Local · {self.runtime.status.state}"
         self.capabilities = config.capabilities
         self.last_unsupported_operations: list[str] = []
@@ -48,4 +52,9 @@ class JarvisArtProvider(AIProvider):
         return result.plan
 
     def test_connection(self) -> str:
-        return f"JarvisArt Local: {self.runtime.status.state}"
+        status = self.runtime.status
+        if status.state.startswith("Mock"):
+            return f"JarvisArt Local: {status.state}"
+        if status.state != "Ready":
+            raise AIRequestError("JarvisArt 服务离线", status.message, provider="JarvisArt Local", model=self.config.model)
+        return f"JarvisArt Local: {status.state}"

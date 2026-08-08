@@ -12,6 +12,8 @@ from app.ai.executor import apply_editing_plan
 from app.ai.jarvisart.adapter import JarvisArtAdapter
 from app.ai.jarvisart.provider import JarvisArtProvider
 from app.ai.jarvisart.runtime import RealJarvisArtRuntimeStub
+from app.ai.jarvisart.runtime import LocalJarvisArtRuntime, parse_jarvisart_lua
+from app.ai.jarvisart.service import JarvisArtServiceManager
 from app.ai.jarvisart.schemas import JarvisArtNativePlan
 from app.ai.provider import PlanningRequest
 from app.ai.provider_registry import provider_registry
@@ -129,3 +131,27 @@ def test_registry_exposes_local_provider_without_api_key_and_atomic_history_is_o
     assert len(history.entries) == 2
     restored = history.undo()
     assert restored is not None and restored.is_pristine()
+
+
+def test_real_jarvisart_lua_is_parsed_into_supported_parameters_and_visible_unsupported_operations():
+    plan = parse_jarvisart_lua('return { Exposure2012 = -0.35, Contrast2012 = 12, HueAdjustmentBlue = -5, LensBlur = 10 }')
+    result = JarvisArtAdapter().adapt(plan)
+    assert [(item.tool, item.value) for item in result.plan.global_adjustments] == [("set_exposure", -0.35), ("set_contrast", 12.0)]
+    assert result.plan.hsl_adjustments[0].color == HSLColor.BLUE
+    assert any("LensBlur" in item for item in result.unsupported_operations)
+
+
+def test_local_service_status_reports_ready_from_a_health_response(tmp_path):
+    root = tmp_path / "JarvisArt"
+    (root / "scripts").mkdir(parents=True)
+    (root / "scripts" / "launch_services.ps1").write_text("# launcher", encoding="utf-8")
+
+    class Response:
+        def __enter__(self): return self
+        def __exit__(self, *args): return False
+        def read(self): return b'{"status":"ok","model_status":"online","model":"qwen2_vl"}'
+
+    manager = JarvisArtServiceManager(str(root), opener=lambda request, timeout: Response())
+    status = manager.status()
+    assert status.state == "Ready"
+    assert status.model == "qwen2_vl"

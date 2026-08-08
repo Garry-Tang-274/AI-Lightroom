@@ -14,6 +14,8 @@ from app.ai.orchestrator import AIOrchestrator, encode_preview
 from app.ai.provider import PlanningRequest
 from app.ai.provider_registry import provider_registry
 from app.ai.qwen_provider import QWEN_DEFAULT_BASE_URL, QWEN_VISION_TIMEOUT_SECONDS, QwenProvider
+from app.ai.deepseek_provider import DEEPSEEK_DEFAULT_BASE_URL
+from app.ai.openai_compatible_provider import _parse_headers
 from app.ai.schemas import EditingPlan
 from app.core.editor_state import EditorState, MaskType
 from app.ui.settings_dialog import SettingsDialog
@@ -37,7 +39,9 @@ def test_registry_exposes_decoupled_provider_metadata_and_capabilities():
     assert qwen.capabilities.supports_vision
     assert qwen.capabilities.supports_structured_output
     assert provider_registry.descriptor("custom").capabilities.supports_custom_base_url
-    assert {item.id for item in provider_registry.descriptors()} >= {"gemini", "openai", "qwen", "custom", "mock", "jarvisart_local"}
+    assert provider_registry.descriptor("deepseek").default_base_url == DEEPSEEK_DEFAULT_BASE_URL
+    assert not provider_registry.descriptor("deepseek").capabilities.supports_vision
+    assert {item.id for item in provider_registry.descriptors()} >= {"gemini", "openai", "qwen", "deepseek", "custom", "mock", "jarvisart_local"}
 
 
 def test_qwen_vision_json_plan_drives_existing_renderer_without_network():
@@ -137,6 +141,7 @@ def test_settings_exposes_qwen_and_custom_provider_choices(qtbot, tmp_path):
     assert dialog.provider.findData("qwen") >= 0
     assert dialog.provider.findData("custom") >= 0
     assert dialog.provider.findData("jarvisart_local") >= 0
+    assert dialog.provider.findData("deepseek") >= 0
     assert dialog.model.text() == "qwen3.7-plus"
     assert dialog.base_url.text() == QWEN_DEFAULT_BASE_URL
 
@@ -153,6 +158,12 @@ def test_settings_shows_jarvisart_local_runtime_mode_and_privacy_status(qtbot, t
     assert not dialog.test_button.isEnabled()
     dialog.jarvisart_mode.setCurrentIndex(dialog.jarvisart_mode.findData("real"))
     assert dialog._current_config().local_mode == "real"
+
+
+def test_custom_headers_reject_authorization_overrides_and_accept_safe_values():
+    assert _parse_headers('{"X-Client": "AI-Lightroom"}') == {"X-Client": "AI-Lightroom"}
+    with pytest.raises(ValueError, match="授权头"):
+        _parse_headers('{"Authorization": "Bearer not-allowed"}')
 
 
 def test_settings_migrates_legacy_gemini_selection(tmp_path):

@@ -62,7 +62,7 @@ class AIOrchestrator:
         history_summary: list[str],
         selected_mask_id: str | None = None,
     ) -> AIProcessResult:
-        use_vision = self.should_use_vision(instruction)
+        use_vision = self.should_use_vision(instruction) or bool(getattr(self.provider, "requires_visual_input", False))
         rendered = render_image(source_preview, state)
         preview_jpeg = encode_preview(rendered, self.preview_size, self.jpeg_quality) if use_vision else None
         request = PlanningRequest(instruction, state.snapshot(), preview_jpeg, history_summary)

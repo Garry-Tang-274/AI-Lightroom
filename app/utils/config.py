@@ -24,7 +24,12 @@ class RuntimeSettings:
     custom_provider_name: str = ""
     custom_supports_vision: bool = True
     custom_supports_structured_output: bool = True
+    custom_organization: str = ""
+    custom_headers: str = ""
     jarvisart_mode: str = "mock"
+    jarvisart_root: str = ""
+    jarvisart_endpoint: str = "http://127.0.0.1:8765"
+    jarvisart_auto_start: bool = True
     preview_size: int = 1536
     ai_reinspection: bool = False
     max_vision_calls: int = 2
@@ -47,6 +52,11 @@ class RuntimeSettings:
             custom_vision=self.custom_supports_vision,
             custom_structured_output=self.custom_supports_structured_output,
             local_mode=self.jarvisart_mode,
+            custom_organization=self.custom_organization,
+            custom_headers=self.custom_headers,
+            jarvisart_root=self.jarvisart_root,
+            jarvisart_endpoint=self.jarvisart_endpoint,
+            jarvisart_auto_start=self.jarvisart_auto_start,
         )
 
 
@@ -64,8 +74,8 @@ class SettingsManager:
             provider = "gemini"
         descriptor = provider_registry.descriptor(provider)
         legacy_model = self.store.value(f"ai/{provider}_model", "") if provider in {"gemini", "openai"} else ""
-        model_env_name = {"gemini": "GEMINI_MODEL", "openai": "OPENAI_MODEL", "qwen": "QWEN_MODEL", "custom": "AI_LIGHTROOM_CUSTOM_MODEL"}.get(provider)
-        base_url_env_name = {"qwen": "QWEN_BASE_URL", "custom": "AI_LIGHTROOM_CUSTOM_BASE_URL"}.get(provider)
+        model_env_name = {"gemini": "GEMINI_MODEL", "openai": "OPENAI_MODEL", "qwen": "QWEN_MODEL", "deepseek": "DEEPSEEK_MODEL", "custom": "AI_LIGHTROOM_CUSTOM_MODEL"}.get(provider)
+        base_url_env_name = {"qwen": "QWEN_BASE_URL", "deepseek": "DEEPSEEK_BASE_URL", "custom": "AI_LIGHTROOM_CUSTOM_BASE_URL"}.get(provider)
         environment_model = os.getenv(model_env_name, "") if model_env_name else ""
         environment_base_url = os.getenv(base_url_env_name, "") if base_url_env_name else ""
         model = str(environment_model or self.store.value("ai/provider_model", legacy_model or descriptor.default_model))
@@ -77,7 +87,12 @@ class SettingsManager:
             custom_provider_name=str(self.store.value("ai/custom_provider_name", "")),
             custom_supports_vision=_as_bool(self.store.value("ai/custom_supports_vision", True)),
             custom_supports_structured_output=_as_bool(self.store.value("ai/custom_supports_structured_output", True)),
+            custom_organization=str(self.store.value("ai/custom_organization", "")),
+            custom_headers=str(self.store.value("ai/custom_headers", "")),
             jarvisart_mode=str(self.store.value("ai/jarvisart_mode", "mock")),
+            jarvisart_root=str(self.store.value("ai/jarvisart_root", "")),
+            jarvisart_endpoint=str(self.store.value("ai/jarvisart_endpoint", "http://127.0.0.1:8765")),
+            jarvisart_auto_start=_as_bool(self.store.value("ai/jarvisart_auto_start", True)),
             preview_size=_bounded_int(self.store.value("performance/preview_size", 1536), 640, 2048, 1536),
             ai_reinspection=_as_bool(self.store.value("ai/reinspection", False)),
             max_vision_calls=_bounded_int(self.store.value("ai/max_vision_calls", 2), 1, 2, 2),
@@ -117,7 +132,12 @@ class SettingsManager:
         self.store.setValue("ai/custom_provider_name", settings.custom_provider_name)
         self.store.setValue("ai/custom_supports_vision", settings.custom_supports_vision)
         self.store.setValue("ai/custom_supports_structured_output", settings.custom_supports_structured_output)
+        self.store.setValue("ai/custom_organization", settings.custom_organization)
+        self.store.setValue("ai/custom_headers", settings.custom_headers)
         self.store.setValue("ai/jarvisart_mode", settings.jarvisart_mode)
+        self.store.setValue("ai/jarvisart_root", settings.jarvisart_root)
+        self.store.setValue("ai/jarvisart_endpoint", settings.jarvisart_endpoint)
+        self.store.setValue("ai/jarvisart_auto_start", settings.jarvisart_auto_start)
         self.store.setValue("performance/preview_size", settings.preview_size)
         self.store.setValue("ai/reinspection", settings.ai_reinspection)
         self.store.setValue("ai/max_vision_calls", settings.max_vision_calls)

@@ -15,6 +15,7 @@ from app.ai.provider_registry import provider_registry
 from app.ai.system_prompt import DEFAULT_SYSTEM_PROMPT
 from app.ai.usage import AIUsageManager
 from app.ui.provider_test_worker import ProviderConnectionWorker
+from app.ui.jarvisart_worker import JarvisArtControlWorker
 from app.utils.config import RuntimeSettings, SettingsManager
 
 
@@ -26,14 +27,15 @@ class SettingsDialog(QDialog):
         self.usage = AIUsageManager(manager.store)
         self._drafts: dict[str, tuple[object, str]] = {}
         self._connection_worker = None
+        self._jarvisart_worker = None
         self.setWindowTitle("AI Lightroom 设置")
         self.resize(680, 610)
 
         tabs = QTabWidget()
-        tabs.addTab(self._build_ai_tab(), "AI")
-        tabs.addTab(self._build_ai_advanced_tab(), "AI 高级设置")
-        tabs.addTab(self._build_budget_tab(), "AI 费用保护")
-        tabs.addTab(self._build_performance_tab(), "性能与导出")
+        tabs.addTab(self._build_ai_tab(), "AI Providers")
+        tabs.addTab(self._build_ai_advanced_tab(), "AI Advanced")
+        tabs.addTab(self._build_budget_tab(), "API Cost Protection")
+        tabs.addTab(self._build_performance_tab(), "Performance & Export")
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
@@ -62,11 +64,24 @@ class SettingsDialog(QDialog):
         self.base_url.setPlaceholderText("https://…/v1")
         self.custom_vision = QCheckBox("服务支持 Vision / 图片输入")
         self.custom_structured = QCheckBox("服务支持 JSON structured output")
+        self.custom_organization = QLineEdit()
+        self.custom_organization.setPlaceholderText("可选：organization / project")
+        self.custom_headers = QLineEdit()
+        self.custom_headers.setPlaceholderText('可选 JSON，例如 {"X-Client": "AI-Lightroom"}')
         self.jarvisart_mode = QComboBox()
         self.jarvisart_mode.addItem("Mock Native（本地 fixture）", "mock")
         self.jarvisart_mode.addItem("Real Native（官方本地模型）", "real")
         self.jarvisart_status = QLabel()
         self.jarvisart_status.setWordWrap(True)
+        self.jarvisart_root = QLineEdit()
+        self.jarvisart_root.setPlaceholderText("可选：自动检测相邻 JarvisArt 安装或环境变量")
+        self.jarvisart_endpoint = QLineEdit()
+        self.jarvisart_endpoint.setPlaceholderText("http://127.0.0.1:8765")
+        self.jarvisart_auto_start = QCheckBox("首次 JarvisArt 请求时自动启动本地服务")
+        self.jarvisart_start = QPushButton("启动 JarvisArt")
+        self.jarvisart_stop = QPushButton("停止并释放显存")
+        self.jarvisart_start.clicked.connect(lambda: self._control_jarvisart("start"))
+        self.jarvisart_stop.clicked.connect(lambda: self._control_jarvisart("stop"))
         self.reinspection = QCheckBox("AI 自动复检（默认关闭；开启时一次命令最多可能额外调用一次）")
         self.reinspection.setChecked(self.runtime.ai_reinspection)
         self.max_calls = QSpinBox()
@@ -84,8 +99,19 @@ class SettingsDialog(QDialog):
         form.addRow("Base URL（OpenAI-compatible）", self.base_url)
         form.addRow("Custom 能力", self.custom_vision)
         form.addRow("", self.custom_structured)
+        form.addRow("Organization / Project（Custom）", self.custom_organization)
+        form.addRow("Custom Headers（JSON）", self.custom_headers)
         form.addRow("JarvisArt 运行模式", self.jarvisart_mode)
         form.addRow("JarvisArt 状态", self.jarvisart_status)
+        form.addRow("JarvisArt 根目录", self.jarvisart_root)
+        form.addRow("JarvisArt Endpoint", self.jarvisart_endpoint)
+        form.addRow("", self.jarvisart_auto_start)
+        jarvisart_actions = QWidget()
+        jarvisart_actions_layout = QVBoxLayout(jarvisart_actions)
+        jarvisart_actions_layout.setContentsMargins(0, 0, 0, 0)
+        jarvisart_actions_layout.addWidget(self.jarvisart_start)
+        jarvisart_actions_layout.addWidget(self.jarvisart_stop)
+        form.addRow("JarvisArt 服务", jarvisart_actions)
         form.addRow("Automatic Reinspection", self.reinspection)
         form.addRow("单次命令最多视觉调用", self.max_calls)
         form.addRow("支持能力", self.capability_label)
@@ -117,6 +143,9 @@ class SettingsDialog(QDialog):
                 custom_vision=self.custom_vision.isChecked(),
                 custom_structured_output=self.custom_structured.isChecked(),
                 local_mode=str(self.jarvisart_mode.currentData()),
+                custom_organization=self.custom_organization.text(), custom_headers=self.custom_headers.text(),
+                jarvisart_root=self.jarvisart_root.text(), jarvisart_endpoint=self.jarvisart_endpoint.text(),
+                jarvisart_auto_start=self.jarvisart_auto_start.isChecked(),
             ),
             self.api_key.text(),
         )
@@ -143,13 +172,30 @@ class SettingsDialog(QDialog):
         self.custom_name.setEnabled(descriptor.is_custom)
         self.custom_vision.setEnabled(descriptor.is_custom)
         self.custom_structured.setEnabled(descriptor.is_custom)
+        self.custom_organization.setEnabled(descriptor.is_custom)
+        self.custom_headers.setEnabled(descriptor.is_custom)
         self.custom_vision.setChecked(config.capabilities.supports_vision)
         self.custom_structured.setChecked(config.capabilities.supports_structured_output)
+        self.custom_organization.setText(config.custom_organization if descriptor.is_custom else "")
+        self.custom_headers.setText(config.custom_headers if descriptor.is_custom else "")
         self.jarvisart_mode.setCurrentIndex(max(0, self.jarvisart_mode.findData(config.local_mode)))
         is_jarvisart = provider_id == "jarvisart_local"
         self.jarvisart_mode.setEnabled(is_jarvisart)
+        self.jarvisart_root.setEnabled(is_jarvisart)
+        self.jarvisart_endpoint.setEnabled(is_jarvisart)
+        self.jarvisart_auto_start.setEnabled(is_jarvisart)
+        self.jarvisart_start.setEnabled(is_jarvisart and config.local_mode == "real")
+        self.jarvisart_stop.setEnabled(is_jarvisart and config.local_mode == "real")
+        self.jarvisart_root.setText(config.jarvisart_root)
+        self.jarvisart_endpoint.setText(config.jarvisart_endpoint)
+        self.jarvisart_auto_start.setChecked(config.jarvisart_auto_start)
         if is_jarvisart:
-            status = "Mock Native Ready：使用本地原生输出 fixture，不上传照片、不调用云端、无 API 费用。" if config.local_mode == "mock" else "Real Model Not Installed：尚未部署官方 JarvisArt-1208 本地运行时；不会自动回退到云端。"
+            if config.local_mode == "mock":
+                status = "Mock Native Ready：使用本地原生输出 fixture，不上传照片、不调用云端、无 API 费用。"
+            else:
+                from app.ai.jarvisart.service import JarvisArtServiceManager
+                detected = JarvisArtServiceManager(config.jarvisart_root, config.jarvisart_endpoint).status()
+                status = f"{detected.state}：{detected.message}\n模型：{detected.model or 'JarvisArt-1208'}\n本地 GPU · 无云端费用 · 图片不会发送到云端"
             self.provider_description.setText("JarvisArt Local 在本机处理缩小预览；不会上传原图，也不使用云端 AI 额度。")
             self.jarvisart_status.setText(status)
         else:
@@ -164,6 +210,9 @@ class SettingsDialog(QDialog):
             str(self.provider.currentData()), self.model.text(), self.base_url.text(), self.custom_name.text(),
             custom_vision=self.custom_vision.isChecked(), custom_structured_output=self.custom_structured.isChecked(),
             local_mode=str(self.jarvisart_mode.currentData()),
+            custom_organization=self.custom_organization.text(), custom_headers=self.custom_headers.text(),
+            jarvisart_root=self.jarvisart_root.text(), jarvisart_endpoint=self.jarvisart_endpoint.text(),
+            jarvisart_auto_start=self.jarvisart_auto_start.isChecked(),
         )
 
     def _test_connection(self) -> None:
@@ -181,6 +230,23 @@ class SettingsDialog(QDialog):
         worker.signals.succeeded.connect(self._connection_succeeded)
         worker.signals.failed.connect(self._connection_failed)
         QThreadPool.globalInstance().start(worker)
+
+    def _control_jarvisart(self, action: str) -> None:
+        if self._jarvisart_worker is not None:
+            return
+        self.jarvisart_start.setEnabled(False)
+        self.jarvisart_stop.setEnabled(False)
+        worker = JarvisArtControlWorker(self.jarvisart_root.text(), self.jarvisart_endpoint.text(), action)
+        self._jarvisart_worker = worker
+        worker.signals.finished.connect(self._jarvisart_control_finished)
+        QThreadPool.globalInstance().start(worker)
+
+    def _jarvisart_control_finished(self, status) -> None:
+        self._jarvisart_worker = None
+        self.jarvisart_status.setText(f"{status.state}：{status.message}\n模型：{status.model or 'JarvisArt-1208'}")
+        is_real = self.provider.currentData() == "jarvisart_local" and self.jarvisart_mode.currentData() == "real"
+        self.jarvisart_start.setEnabled(is_real)
+        self.jarvisart_stop.setEnabled(is_real)
 
     def _connection_succeeded(self, message: str) -> None:
         self._connection_worker = None
@@ -258,6 +324,9 @@ class SettingsDialog(QDialog):
             custom_supports_vision=self.custom_vision.isChecked(),
             custom_supports_structured_output=self.custom_structured.isChecked(),
             jarvisart_mode=str(self.jarvisart_mode.currentData()),
+            custom_organization=self.custom_organization.text().strip(), custom_headers=self.custom_headers.text().strip(),
+            jarvisart_root=self.jarvisart_root.text().strip(), jarvisart_endpoint=self.jarvisart_endpoint.text().strip() or "http://127.0.0.1:8765",
+            jarvisart_auto_start=self.jarvisart_auto_start.isChecked(),
             preview_size=self.preview_size.value(), ai_reinspection=self.reinspection.isChecked(), max_vision_calls=self.max_calls.value(),
             system_prompt=self.system_prompt.toPlainText().strip() or DEFAULT_SYSTEM_PROMPT,
             export_jpeg_quality=self.jpeg_quality.value(), performance_mode=self.performance.currentData(),
