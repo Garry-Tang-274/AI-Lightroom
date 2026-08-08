@@ -141,6 +141,20 @@ def test_settings_exposes_qwen_and_custom_provider_choices(qtbot, tmp_path):
     assert dialog.base_url.text() == QWEN_DEFAULT_BASE_URL
 
 
+def test_settings_shows_jarvisart_local_runtime_mode_and_privacy_status(qtbot, tmp_path):
+    manager = SettingsManager()
+    manager.store = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    manager.store.setValue("ai/active_provider", "jarvisart_local")
+    dialog = SettingsDialog(manager)
+    qtbot.addWidget(dialog)
+    assert dialog.provider.currentData() == "jarvisart_local"
+    assert dialog.jarvisart_mode.isEnabled()
+    assert "Mock Native Ready" in dialog.jarvisart_status.text()
+    assert not dialog.test_button.isEnabled()
+    dialog.jarvisart_mode.setCurrentIndex(dialog.jarvisart_mode.findData("real"))
+    assert dialog._current_config().local_mode == "real"
+
+
 def test_settings_migrates_legacy_gemini_selection(tmp_path):
     manager = SettingsManager()
     manager.store = QSettings(str(tmp_path / "legacy.ini"), QSettings.Format.IniFormat)
