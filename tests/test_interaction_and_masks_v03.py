@@ -93,3 +93,9 @@ def test_mask_overlay_and_ai_requested_mask_use_real_generator(qtbot, tmp_path):
     _reject_unreliable_masks(pixels, EditorState(), execution)
     assert len(execution.state.masks) == 1
     assert execution.state.masks[0].adjustments.exposure == -0.4
+
+
+def test_mask_panel_exposes_local_texture(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    assert "texture" in window.mask_panel.controls

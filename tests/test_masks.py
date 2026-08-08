@@ -59,6 +59,25 @@ def test_local_adjustment_changes_only_masked_region():
     assert abs(float(rendered[-1].mean()) - float(source[-1].mean())) < 2
 
 
+def test_local_texture_changes_only_the_masked_region():
+    yy, xx = np.mgrid[:100, :100]
+    source = np.full((100, 100, 3), 110, dtype=np.uint8)
+    source[(xx + yy) % 4 < 2] += 18
+    state = EditorState(
+        masks=[
+            MaskLayer(
+                name="top texture",
+                type=MaskType.LINEAR_GRADIENT,
+                parameters={"start_x": 0.5, "start_y": 0.0, "end_x": 0.5, "end_y": 0.42},
+                adjustments=LocalAdjustments(texture=55.0),
+            )
+        ]
+    )
+    rendered = render_image(source, state)
+    assert not np.array_equal(rendered[:28], source[:28])
+    assert np.array_equal(rendered[-12:], source[-12:])
+
+
 def test_sky_mask_prefers_blue_upper_region():
     source = np.zeros((120, 180, 3), dtype=np.uint8)
     source[:65] = (80, 145, 220)

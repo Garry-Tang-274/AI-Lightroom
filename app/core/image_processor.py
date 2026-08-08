@@ -70,7 +70,7 @@ def _apply_local_adjustments(image: np.ndarray, local: LocalAdjustments) -> np.n
         local.blacks,
     )
     adjusted = _saturation(adjusted, local.saturation, 0)
-    adjusted = _local_contrast(adjusted, local.clarity, 0, local.dehaze)
+    adjusted = _local_contrast(adjusted, local.clarity, local.texture, local.dehaze)
     return adjusted
 
 

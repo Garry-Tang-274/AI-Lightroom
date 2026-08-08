@@ -116,6 +116,7 @@ class LocalAdjustments(BaseModel):
     tint: float = Field(0.0, ge=-100.0, le=100.0)
     saturation: float = Field(0.0, ge=-100.0, le=100.0)
     clarity: float = Field(0.0, ge=-100.0, le=100.0)
+    texture: float = Field(0.0, ge=-100.0, le=100.0)
     dehaze: float = Field(0.0, ge=-100.0, le=100.0)
 
     def with_value(self, key: str, value: float) -> "LocalAdjustments":

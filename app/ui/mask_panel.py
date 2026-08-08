@@ -29,6 +29,7 @@ LOCAL_SPECS = (
     SliderSpec("tint", "Tint", -100, 100),
     SliderSpec("saturation", "饱和度", -100, 100),
     SliderSpec("clarity", "清晰度", -100, 100),
+    SliderSpec("texture", "纹理", -100, 100),
     SliderSpec("dehaze", "去朦胧", -100, 100),
 )
 

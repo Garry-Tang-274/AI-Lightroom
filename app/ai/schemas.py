@@ -109,6 +109,7 @@ class LocalAdjustmentValues(StrictModel):
     tint: float | None = Field(None, ge=-100, le=100)
     saturation: float | None = Field(None, ge=-100, le=100)
     clarity: float | None = Field(None, ge=-100, le=100)
+    texture: float | None = Field(None, ge=-100, le=100)
     dehaze: float | None = Field(None, ge=-100, le=100)
 
 
@@ -184,7 +185,7 @@ may use their documented parameters.
 local_adjustments item: {\"mask_ref\": \"sky_1\", \"adjustments\":
 {\"exposure\": -0.3}}. mask_ref must match a requested mask ref or an existing
 mask id/name. Local keys may only be exposure, contrast, highlights, shadows,
-whites, blacks, temperature, tint, saturation, clarity, dehaze. Do not output
+whites, blacks, temperature, tint, saturation, clarity, texture, dehaze. Do not output
 null, omitted required fields, comments, or unsupported adjustment names.
 """
 
