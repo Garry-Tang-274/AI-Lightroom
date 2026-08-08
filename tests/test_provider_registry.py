@@ -12,7 +12,7 @@ from app.ai.errors import AIRequestError
 from app.ai.orchestrator import AIOrchestrator, encode_preview
 from app.ai.provider import PlanningRequest
 from app.ai.provider_registry import provider_registry
-from app.ai.qwen_provider import QWEN_DEFAULT_BASE_URL, QwenProvider
+from app.ai.qwen_provider import QWEN_DEFAULT_BASE_URL, QWEN_VISION_TIMEOUT_SECONDS, QwenProvider
 from app.ai.schemas import EditingPlan
 from app.core.editor_state import EditorState, MaskType
 from app.ui.settings_dialog import SettingsDialog
@@ -66,6 +66,7 @@ def test_qwen_vision_json_plan_drives_existing_renderer_without_network():
     assert np.array_equal(pixels, original)  # analysis never overwrites source pixels
     assert completions.kwargs["model"] == "qwen3.7-plus"
     assert completions.kwargs["response_format"] == {"type": "json_object"}
+    assert completions.kwargs["extra_body"] == {"enable_thinking": False}
     user_content = completions.kwargs["messages"][1]["content"]
     assert any(item["type"] == "image_url" and item["image_url"]["url"].startswith("data:image/jpeg;base64,") for item in user_content)
 
@@ -138,3 +139,17 @@ def test_qwen_analysis_preview_uses_configured_small_copy_not_original():
     preview = encode_preview(pixels, max_edge=1536)
     with Image.open(BytesIO(preview)) as image:
         assert max(image.size) == 1536
+
+
+def test_qwen_uses_a_longer_visual_deadline_without_enabling_retries(monkeypatch):
+    captured: dict[str, object] = {}
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr("app.ai.openai_compatible_provider.OpenAI", FakeClient)
+    QwenProvider("test-key")
+
+    assert captured["timeout"] == QWEN_VISION_TIMEOUT_SECONDS
+    assert captured["max_retries"] == 0

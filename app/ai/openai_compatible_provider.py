@@ -39,6 +39,7 @@ class OpenAICompatibleProvider(AIProvider):
         system_prompt: str = DEFAULT_SYSTEM_PROMPT,
         on_request_started=None,
         on_result=None,
+        timeout_seconds: float = 45.0,
     ) -> None:
         if not api_key and client is None:
             raise ValueError(f"{display_name} API Key 为空")
@@ -49,7 +50,16 @@ class OpenAICompatibleProvider(AIProvider):
         self.model = model
         self.base_url = base_url.rstrip("/")
         self.capabilities = capabilities
-        self.client = client or OpenAI(api_key=api_key, base_url=self.base_url, timeout=45.0, max_retries=0)
+        # Keep this explicit: the app's cost-safety rule is zero automatic
+        # retries, while the provider-specific deadline can accommodate a
+        # genuine multimodal inference request.
+        self.timeout_seconds = float(timeout_seconds)
+        self.client = client or OpenAI(
+            api_key=api_key,
+            base_url=self.base_url,
+            timeout=self.timeout_seconds,
+            max_retries=0,
+        )
         self.system_prompt = system_prompt
         self.on_request_started = on_request_started
         self.on_result = on_result
@@ -71,9 +81,16 @@ class OpenAICompatibleProvider(AIProvider):
                     {"role": "user", "content": user_content},
                 ],
                 **({"response_format": {"type": "json_object"}} if self.capabilities.supports_structured_output else {}),
+                **self._request_options(),
             )
         except Exception as exc:
-            raise error_from_exception(exc, model=self.model, request_sent=True, provider=self.name) from exc
+            error = error_from_exception(exc, model=self.model, request_sent=True, provider=self.name)
+            if error.category == "请求超时":
+                error.message = (
+                    f"{self.name} 的视觉调色请求在 {self.timeout_seconds:.0f} 秒内未完成。"
+                    "请求没有自动重试，照片未发生任何修改。"
+                )
+            raise error from exc
         text = _completion_text(response)
         if not text:
             raise AIRequestError(f"{self.name} 返回空内容", "AI 未返回可执行的 EditingPlan。", provider=self.name, model=self.model, request_sent=True)
@@ -99,6 +116,7 @@ class OpenAICompatibleProvider(AIProvider):
                 model=self.model,
                 messages=[{"role": "user", "content": "Return JSON exactly: {\"status\":\"ok\"}"}],
                 **({"response_format": {"type": "json_object"}} if self.capabilities.supports_structured_output else {}),
+                **self._request_options(),
             )
         except Exception as exc:
             raise error_from_exception(exc, model=self.model, request_sent=True, provider=self.name) from exc
@@ -108,6 +126,10 @@ class OpenAICompatibleProvider(AIProvider):
             usage = getattr(response, "usage", None)
             self.on_result("连接测试成功", getattr(usage, "prompt_tokens", None), getattr(usage, "completion_tokens", None), getattr(usage, "total_tokens", None))
         return "连接成功"
+
+    def _request_options(self) -> dict[str, object]:
+        """Vendor-neutral extension point for compatible API options."""
+        return {}
 
 
 def _completion_text(response) -> str:
