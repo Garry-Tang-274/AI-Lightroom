@@ -83,6 +83,7 @@ class MainWindow(QMainWindow):
         self._ai_worker = None
         self._ai_details = ""
         self._last_ai_error: AIRequestError | None = None
+        self._last_ai_prompt = ""
         self._adjustment_clipboard: dict | None = None
         self._showing_before = False
         self._build_actions()
@@ -185,6 +186,7 @@ class MainWindow(QMainWindow):
         self.ai_panel.details_requested.connect(self._show_ai_details)
         self.ai_panel.cancel_requested.connect(self._cancel_ai_request)
         self.ai_panel.usage_requested.connect(self._show_ai_usage)
+        self.ai_panel.retry_requested.connect(self._retry_ai_request)
         self.adjustments.adjustment_changed.connect(self._set_basic_adjustment)
         self.adjustments.hsl_changed.connect(self._set_hsl_adjustment)
         self.adjustments.curve_changed.connect(self._set_curve)
@@ -688,6 +690,7 @@ class MainWindow(QMainWindow):
         if self._ai_worker is not None:
             self.ai_panel.add_assistant_message("上一条指令仍在处理中，请稍候。")
             return
+        self._last_ai_prompt = prompt
         self._flush_history()
         self.runtime_settings = self.settings_manager.runtime()
         budget = self.usage_manager.status()
@@ -715,6 +718,7 @@ class MainWindow(QMainWindow):
         worker.signals.failed.connect(self._ai_failed)
         self.ai_panel.set_busy(True)
         self._last_ai_error = None
+        self.ai_panel.set_retry_available(False)
         self.statusBar().showMessage("AI 正在分析当前画面和编辑状态…")
         self._render_pool.start(worker)
 
@@ -753,6 +757,7 @@ class MainWindow(QMainWindow):
         self._last_ai_error = error
         self._ai_details = error.details()
         self.ai_panel.set_details_available(True)
+        self.ai_panel.set_retry_available(bool(self._last_ai_prompt))
         self.ai_panel.add_assistant_message(
             f"AI 请求失败\n类型：{error.category}\n模型：{error.model or self.runtime_settings.gemini_model}\n说明：{error.message}\n照片未发生任何修改。"
         )
@@ -786,6 +791,10 @@ class MainWindow(QMainWindow):
             self._ai_worker.cancel()
             self.ai_panel.add_assistant_message("已请求取消本地等待；已经发出的云端请求可能仍计入调用。")
             self.statusBar().showMessage("正在等待当前 AI 请求安全结束…", 5000)
+
+    def _retry_ai_request(self) -> None:
+        if self._last_ai_prompt and self._ai_worker is None:
+            self._run_ai_edit(self._last_ai_prompt)
 
     def _show_ai_usage(self) -> None:
         provider = self._provider_status_text()

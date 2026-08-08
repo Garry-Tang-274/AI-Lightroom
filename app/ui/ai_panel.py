@@ -22,6 +22,7 @@ class AIPanel(QWidget):
     details_requested = Signal()
     cancel_requested = Signal()
     usage_requested = Signal()
+    retry_requested = Signal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -43,6 +44,8 @@ class AIPanel(QWidget):
         self.send_button.setObjectName("accentButton")
         self.cancel_button = QPushButton("取消等待")
         self.cancel_button.setEnabled(False)
+        self.retry_button = QPushButton("重新尝试")
+        self.retry_button.setEnabled(False)
         self.details_button = QPushButton("查看调整详情")
         self.details_button.setEnabled(False)
         self.usage_button = QPushButton("AI 使用记录")
@@ -51,6 +54,7 @@ class AIPanel(QWidget):
         self.input.submit_requested.connect(self._submit)
         self.send_button.clicked.connect(self._submit)
         self.cancel_button.clicked.connect(self.cancel_requested)
+        self.retry_button.clicked.connect(self.retry_requested)
         self.details_button.clicked.connect(self.details_requested)
         self.usage_button.clicked.connect(self.usage_requested)
 
@@ -58,6 +62,7 @@ class AIPanel(QWidget):
         action_row.addWidget(self.details_button)
         action_row.addWidget(self.usage_button)
         action_row.addStretch()
+        action_row.addWidget(self.retry_button)
         action_row.addWidget(self.cancel_button)
         action_row.addWidget(self.send_button)
         layout.addWidget(title)
@@ -101,3 +106,6 @@ class AIPanel(QWidget):
 
     def set_details_available(self, available: bool) -> None:
         self.details_button.setEnabled(available)
+
+    def set_retry_available(self, available: bool) -> None:
+        self.retry_button.setEnabled(available)
