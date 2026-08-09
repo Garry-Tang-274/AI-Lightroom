@@ -71,3 +71,31 @@ AI Lightroom 的 **JarvisArt Local GGUF** 不是通用的“模型文件选择�
 ## 7. 提交问题时需要的安全信息
 
 可提供：Provider 状态、模型名、端口、脱敏后的 `/health` JSON、最近 100 行启动日志、GPU 显存错误、应用的错误详情。不要提供：API Key、完整照片、Windows 凭据导出、完整的用户目录。
+
+## 8. 效果示例：克制的电影感航拍调色
+
+<p align="center">
+  <img src="assets/jarvisart-local-before-after.jpg" width="800" alt="JarvisArt Local 航拍照片前后对比：上方原图，下方调整结果">
+  <br>
+  <em>上：原图。下：本地 JarvisArt 调整结果。</em>
+</p>
+
+**使用的提示词：**
+
+> 把这张照片调成冷峻、硬朗、低饱和的电影感。整体稍微压暗，加强地表纹理和道路层次，白色主体保持清晰，不要过度 HDR。
+
+该请求刻意同时写清了视觉方向和约束：既要求冷峻、硬朗的低饱和氛围及更强的地表/道路层次，也要求白色主体保持可辨识，并明确避免夸张 HDR。结果是更暗、更克制、道路与地表分离更明显的调色；它不改变构图，也不会凭空生成内容。
+
+对应英文提示词：
+
+> Give this image a cool, hard-edged, low-saturation cinematic look. Darken it slightly overall, strengthen terrain texture and road separation, keep the white subject clear, and avoid excessive HDR.
+
+## 9. 应用内界面示意
+
+<p align="center">
+  <img src="assets/jarvisart-local-interface.png" width="1000" alt="AI Lightroom 界面：编辑历史、调整参数、JarvisArt Local 状态和自然语言提示区">
+  <br>
+  <em>建议工作流：查看结果、细化提示词，再通过历史记录比较方案后决定保留。</em>
+</p>
+
+该截图用于说明 AI Lightroom 内的工作流，不表示把 Lightroom Classic 的每一个原生面板嵌入本应用。实际使用时，可先查看结果，再提交一条聚焦的后续请求，并使用历史/撤销把经过校验的方案与先前的非破坏性状态对比。

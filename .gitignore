@@ -30,6 +30,7 @@ temp/
 !assets/*.png
 !assets/*.jpg
 !docs/assets/*.png
+!docs/assets/*.jpg
 !.github/
 .idea/
 .vscode/

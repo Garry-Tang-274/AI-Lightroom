@@ -32,6 +32,14 @@ AI Lightroom 是一款 Windows 桌面照片编辑器：传统参数调色与自�
 | 使用云端 AI 调色 | 对应服务商的 API Key | 在 **文件 → 设置 → AI** 选择 Provider 并测试连接。 |
 | 本地运行 JarvisArt | 独立安装的 JarvisArt、模型与本地桥接服务 | 阅读 [JarvisArt 本地部署与连接说明](docs/JARVISART_zh-CN.md)。 |
 
+## JarvisArt Local 效果示例
+
+<p align="center">
+  <img src="docs/assets/jarvisart-local-before-after.jpg" width="800" alt="JarvisArt Local 航拍照片前后对比：上方原图，下方调整结果">
+</p>
+
+上方为原图，下方为本地应用后的结果。使用的提示词是：“把这张照片调成冷峻、硬朗、低饱和的电影感。整体稍微压暗，加强地表纹理和道路层次，白色主体保持清晰，不要过度 HDR。”它展示了如何同时给出明确的视觉方向和保护条件，而不是笼统地要求“修得更好”。完整提示词、界面示意和结果解读见 [JarvisArt 本地部署与连接说明](docs/JARVISART_zh-CN.md)。
+
 ## 快速操作
 
 1. 从 GitHub Releases 下载 Windows 安装包或 ZIP；安装包最简单，ZIP 必须完整解压后再运行。

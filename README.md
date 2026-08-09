@@ -59,6 +59,14 @@ AI Lightroom does not proxy photos or API keys through a project server. Each cl
 
 JarvisArt Local GGUF is an optional, user-supplied localhost runtime and is not included in this repository or release. AI Lightroom connects only to its local bridge and sends a temporary local preview over loopback. It defaults to the high-quality size; this can be changed in Settings. The GGUF, llama.cpp runtime, and any model license remain separate. See [JarvisArt Local](docs/JARVISART.md).
 
+#### Example: a restrained cinematic aerial grade
+
+<p align="center">
+  <img src="docs/assets/jarvisart-local-before-after.jpg" width="800" alt="JarvisArt Local before and after aerial road grade: original above, edited result below">
+</p>
+
+Top: original. Bottom: the locally applied result. The request was: “Give this image a cool, hard-edged, low-saturation cinematic look. Darken it slightly overall, strengthen terrain texture and road separation, keep the white subject clear, and avoid excessive HDR.” It is a useful example of a specific photographic direction with a preservation constraint, rather than a generic “make it better” request. The full prompt, interface reference, and interpretation are in [JarvisArt Local](docs/JARVISART.md).
+
 ### Custom API
 
 Choose **Custom / OpenAI-compatible API** in Settings and supply a Provider Name, Base URL, API Key, and Model ID. Vision and structured output switches are declarations by the user; only enable capabilities the target service actually supports. The app rejects custom `Authorization` headers so API keys remain in Windows Credential Manager. See [Custom API](docs/CUSTOM_API.md).
