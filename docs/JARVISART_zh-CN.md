@@ -51,7 +51,17 @@ AI Lightroom 的 **JarvisArt Local GGUF** 不是通用的“模型文件选择�
 6. 点击 **启动 JarvisArt**，等待状态变为 **Ready**。
 7. 打开照片后在 AI 输入框中输入要求，按 `Ctrl+Enter`。一次成功方案作为一个完整的撤回事务处理。Local GGUF 的“自动”预览质量默认为高清（最长边默认 3072 px）；可在 **文件 → 设置 → 性能与导出** 改成低清或指定 AI 发送质量。
 
-## 5. 状态解释
+## 5. 与 Lightroom Classic 插件共用本地服务
+
+Lightroom Classic 插件可以与 AI Lightroom 共用同一个 localhost JarvisArt bridge。推荐让两个客户端连接同一套根目录和 endpoint，而不是各自重复启动第二份模型进程。这样可以减少端口冲突，也避免重复占用显存。
+
+如果 Lightroom Classic 插件已经配置为在打开 Lightroom 时自动启动 bridge，只要 `/health` 已经显示 Ready，AI Lightroom 就可以直接连接该服务；反过来，如果 bridge 由 AI Lightroom 先启动，兼容的 Lightroom 插件也可以复用同一个 endpoint。
+
+AI Lightroom 只会停止由当前 AI Lightroom 进程自己启动的服务。由 Lightroom Classic、手动脚本或其他程序启动的共享服务不会被它主动杀掉。
+
+Lightroom Classic 中插件菜单放在哪里、是否能在 Develop 界面直接调用，以及给插件绑定什么快捷键，都属于 Lightroom 插件自身的配置范围，不需要修改 AI Lightroom 的 Provider 设置。
+
+## 6. 状态解释
 
 | 状态 | 意义 | 下一步 |
 | --- | --- | --- |
@@ -61,18 +71,19 @@ AI Lightroom 的 **JarvisArt Local GGUF** 不是通用的“模型文件选择�
 | Ready | 健康检查通过 | 可发送一张照片的调色请求。 |
 | Error / timeout | 服务启动或推理失败 | 查看服务日志、显存、端口占用和模型路径。 |
 
-## 6. 常见误区
+## 7. 常见误区
 
 - **把官方 `8002` 端口直接填入 AI Lightroom**：不可行。官方 API 与本应用的 `8765 /develop_settings` 本地桥接接口不同。
 - **只下载 `JarvisArt-1208` 就点“启动”**：不可行。权重还需要符合官方或桥接服务要求的推理运行时。
 - **看到 Mock 返回方案就以为模型已跑通**：不对。Mock 从不加载模型，也不会分析照片；当前版本会直接阻止它对真实照片执行固定演示方案。
 - **要求应用导入任何第三方量化文件**：当前发布版不把第三方量化权重作为官方部署路径。
+- **AI Lightroom 和 Lightroom Classic 各自启动一份 bridge**：通常没有必要。先确认是否能共用同一个健康的 localhost 服务。
 
-## 7. 提交问题时需要的安全信息
+## 8. 提交问题时需要的安全信息
 
 可提供：Provider 状态、模型名、端口、脱敏后的 `/health` JSON、最近 100 行启动日志、GPU 显存错误、应用的错误详情。不要提供：API Key、完整照片、Windows 凭据导出、完整的用户目录。
 
-## 8. 效果示例：克制的电影感航拍调色
+## 9. 效果示例：克制的电影感航拍调色
 
 <p align="center">
   <img src="assets/jarvisart-local-before-after.jpg" width="800" alt="JarvisArt Local 航拍照片前后对比：上方原图，下方调整结果">
@@ -90,7 +101,7 @@ AI Lightroom 的 **JarvisArt Local GGUF** 不是通用的“模型文件选择�
 
 > Give this image a cool, hard-edged, low-saturation cinematic look. Darken it slightly overall, strengthen terrain texture and road separation, keep the white subject clear, and avoid excessive HDR.
 
-## 9. 应用内界面示意
+## 10. 应用内界面示意
 
 <p align="center">
   <img src="assets/jarvisart-local-interface.png" width="1000" alt="AI Lightroom 界面：编辑历史、调整参数、JarvisArt Local 状态和自然语言提示区">
