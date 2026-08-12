@@ -14,6 +14,14 @@ The provider checks `/health`, starts only the selected existing launcher, and c
 
 The settings panel reports Offline, Loading, Ready, or Error. **Stop and release GPU** stops only processes launched by the current AI Lightroom process; shared services started by Lightroom Classic or another tool are not killed. Closing AI Lightroom has the same ownership rule.
 
+## Lightroom Classic coexistence
+
+A Lightroom Classic plugin may use the same localhost JarvisArt bridge as AI Lightroom. The two clients should share the service rather than each starting an unrelated second model process. AI Lightroom therefore treats an already healthy bridge as reusable and does not terminate a process it did not launch.
+
+If the Lightroom Classic plugin is configured to start its bridge automatically when Lightroom opens, AI Lightroom can attach to the same endpoint after `/health` reports Ready. Conversely, if AI Lightroom launched the bridge first, a compatible Lightroom plugin can reuse that running endpoint. Keep one agreed root directory and endpoint to avoid duplicate services, port conflicts, and unnecessary GPU memory use.
+
+Lightroom Classic menu placement, Develop-module invocation, and keyboard-shortcut bindings belong to the Lightroom plugin rather than this repository. They may be configured independently without changing AI Lightroom's provider settings.
+
 ## Current bridge scope
 
 The current JarvisArt local bridge returns Lightroom global parameters and some HSL parameters. AI Lightroom maps supported settings to `EditingPlan` and lists unsupported Lightroom operations instead of silently pretending to apply them. Native local masks and Lightroom-only operations remain a future bridge capability.
