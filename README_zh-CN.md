@@ -16,6 +16,8 @@ AI Lightroom 是一款 Windows 桌面照片编辑器：传统参数调色与自�
 
 **[中文新手完整指南](docs/GETTING_STARTED_zh-CN.md)** · [English getting-started guide](docs/GETTING_STARTED.md)
 
+日常使用可先看[手动修图与文字调色示例](docs/EDITING_WORKFLOWS.md)。当前打包版本为 v1.0.3。
+
 ## 已支持的功能
 
 - JPG / PNG 导入、拖入打开、缩放、适合窗口、直方图、原图对比、撤回/重做与编辑恢复。

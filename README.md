@@ -14,6 +14,12 @@ AI Lightroom 是一款 Windows 桌面照片编辑器，提供非破坏性的传�
 
 ![AI Lightroom interface / AI Lightroom 界面](docs/assets/application-shell.png)
 
+**Start here / 使用入口:** [Windows release](https://github.com/Garry-Tang-274/AI-Lightroom/releases/latest) · [Manual and text-guided workflows / 手动与文字调色](docs/EDITING_WORKFLOWS.md) · [中文指南](docs/GETTING_STARTED_zh-CN.md)
+
+The latest packaged release is v1.0.3. A guide update does not imply a new application release.
+
+当前打包版本为 v1.0.3；说明文档更新不代表软件发布了新版本。
+
 ## Features / 功能
 
 - JPG/PNG import, drag-and-drop, recent files, zoom, fit, 100%, histogram, before/after, undo/redo, and crash-recovery sessions.<br>
