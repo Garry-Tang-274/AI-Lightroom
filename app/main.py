@@ -62,6 +62,10 @@ def main() -> int:
     app = create_application()
     install_exception_hook(log_path)
     window = MainWindow()
+    if args.smoke_test:
+        # Capture the actual Windows rendering without displaying a window or
+        # taking focus from another application during background validation.
+        window.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
     window.show()
     if args.photo:
         QTimer.singleShot(0, lambda: window.open_image_async(args.photo))

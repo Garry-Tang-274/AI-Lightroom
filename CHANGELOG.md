@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.1 - 2026-11-17 — Windows packaging / Windows 打包修复
+
+- Prevented the build environment's unrelated ICU libraries from shadowing the Windows ICU used by Qt. Added executable-level startup checks to stop broken packages before release.
+- 避免构建环境中其他软件的 ICU 库遮蔽 Qt 所需的 Windows 系统库；加入 EXE 启动检查，阻止不可启动的程序包发布。
+- Background smoke capture no longer displays a window or takes desktop focus.
+- 后台启动截图不再显示窗口或抢占桌面焦点。
+
 ## 1.1.0 - 2026-11-17 — Workspace & Reliability
 
 - Reorganised the dark workspace into Adjustments and AI Assistant tabs, with searchable/collapsible parameter groups, a persistent histogram, background image loading, a draggable before/after split (`C`), and focus mode (`Ctrl+Tab`).

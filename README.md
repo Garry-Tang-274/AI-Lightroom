@@ -16,9 +16,9 @@ AI Lightroom 是一款 Windows 桌面照片编辑器，提供非破坏性的传�
 
 **Start here / 使用入口:** [Windows release](https://github.com/Garry-Tang-274/AI-Lightroom/releases/latest) · [Manual and text-guided workflows / 手动与文字调色](docs/EDITING_WORKFLOWS.md) · [中文指南](docs/GETTING_STARTED_zh-CN.md)
 
-Version **1.1.0 — Workspace & Reliability** adds a clearer editing workspace, faster interactive previews, and fixes for editing, recovery, AI, and export. See [release notes / 发布说明](docs/RELEASE_1_1.md).
+Version **1.1.1 — Workspace & Reliability** adds a clearer editing workspace, faster interactive previews, and fixes for editing, recovery, AI, export, and Windows packaging. See [release notes / 发布说明](docs/RELEASE_1_1.md).
 
-**1.1.0 — 工作区与稳定性升级**带来更清晰的编辑布局、更快的拖动预览，以及编辑、恢复、AI 和导出修复。详见[发布说明](docs/RELEASE_1_1.md)。
+**1.1.1 — 工作区与稳定性升级**带来更清晰的编辑布局、更快的拖动预览，以及编辑、恢复、AI、导出与 Windows 打包修复。详见[发布说明](docs/RELEASE_1_1.md)。
 
 ## Features / 功能
 

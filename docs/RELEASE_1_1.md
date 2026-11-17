@@ -1,5 +1,9 @@
 # AI Lightroom 1.1 — Workspace & Reliability / 工作区与稳定性升级
 
+**Windows release: 1.1.1.** This includes the 1.1 workspace update and a packaging fix that prevents unrelated ICU libraries from breaking Qt startup. Background startup validation does not take desktop focus.
+
+**Windows 发布版本：1.1.1。** 包含 1.1 工作区升级，以及避免无关 ICU 库导致 Qt 启动失败的打包修复。后台启动验证不会抢占桌面焦点。
+
 ## Start with the new workspace / 从新工作区开始
 
 Open a photo, then use the right **调色 / Adjustments** tab. Expand only the controls you need or search in Chinese/English. The adjacent **AI 助手 / AI Assistant** tab gives the prompt and result their own space. The left sidebar still holds history, masks, and watermarks.
@@ -45,9 +49,9 @@ The returned `PointColors` operation was explicitly reported as unsupported and 
 
 ## Update and continue / 更新后继续使用
 
-The release passed **194 automated tests**, including rendering, AI failure handling and request accounting, history transactions, isolated settings, and control interactions. The local JarvisArt run above is a separate real-model check; automated cloud tests use mocked responses and incur no API charges.
+The release passed **197 automated tests**, including rendering, AI failure handling and request accounting, history transactions, isolated settings, control interactions, and packaging regressions. The local JarvisArt run above is a separate real-model check; automated cloud tests use mocked responses and incur no API charges.
 
-本版通过 **194 项自动测试**，涵盖渲染、AI 失败处理与请求计数、历史事务、设置隔离及控件交互。上方 JarvisArt 验证为独立的真实模型测试；自动化云端测试使用模拟响应，不产生 API 费用。
+本版通过 **197 项自动测试**，涵盖渲染、AI 失败处理与请求计数、历史事务、设置隔离、控件交互及打包回归。上方 JarvisArt 验证为独立的真实模型测试；自动化云端测试使用模拟响应，不产生 API 费用。
 
 Download the [Windows installer or portable ZIP](https://github.com/Garry-Tang-274/AI-Lightroom/releases/latest). Existing provider settings, credentials, watermark assets, and recoverable sessions remain separate from the application package. JarvisArt models/runtimes are still separately installed; no model download is needed for this update if your local bridge already works.
 

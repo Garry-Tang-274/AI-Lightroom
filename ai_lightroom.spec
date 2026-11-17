@@ -1,11 +1,23 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 from pathlib import Path
+import os
+import sys
 
 root = Path(SPEC).resolve().parent
 
+# Analyze DLLs in the project's Python/Windows environment, not the caller's
+# toolchain PATH. Poppler's unrelated icuuc.dll can otherwise shadow the
+# Windows ICU API required by Qt 6 and produce an EXE that cannot import QtCore.
+if sys.platform == "win32":
+    windows = Path(os.environ.get("SystemRoot", r"C:\Windows"))
+    os.environ["PATH"] = os.pathsep.join(dict.fromkeys(map(str, (
+        Path(sys.executable).parent, Path(sys.base_prefix),
+        windows / "System32", windows,
+    ))))
+
 a = Analysis(
-    [str(root / "app" / "main.py")],
+    [str(root / "build_tools" / "frozen_entry.py")],
     pathex=[str(root)],
     binaries=[],
     datas=[
