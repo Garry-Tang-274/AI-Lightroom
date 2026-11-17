@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import socket
 import ssl
 from dataclasses import dataclass
@@ -23,6 +24,11 @@ class AIRequestError(Exception):
     local_exception: str = ""
     validation_errors: list[dict[str, Any]] | None = None
     request_sent: bool = False
+
+    def __post_init__(self) -> None:
+        self.message = redact_secrets(self.message)
+        if self.validation_errors:
+            self.validation_errors = safe_validation_errors(self.validation_errors)
 
     def __str__(self) -> str:
         return self.message
@@ -64,29 +70,54 @@ class AIRequestError(Exception):
         return "；".join(summary) + suffix
 
 
-def error_from_exception(exc: Exception, *, model: str, request_sent: bool, provider: str = "Gemini") -> AIRequestError:
+def error_from_exception(exc: Exception, *, model: str, request_sent: bool, provider: str = "Gemini", secrets: tuple[str, ...] = ()) -> AIRequestError:
     if isinstance(exc, AIRequestError):
+        exc.message = redact_secrets(exc.message, secrets)
         return exc
     if isinstance(exc, ValidationError):
         return AIRequestError(
             category="Pydantic schema 校验错误", message=f"{provider} 返回内容不符合 EditingPlan schema。",
-            provider=provider, model=model, local_exception=type(exc).__name__, validation_errors=exc.errors(include_url=False),
+            provider=provider, model=model, local_exception=type(exc).__name__, validation_errors=safe_validation_errors(exc),
             request_sent=request_sent,
         )
     if isinstance(exc, socket.gaierror):
-        return AIRequestError("DNS 错误", f"无法解析 {provider} 服务地址。", provider=provider, model=model, local_exception=type(exc).__name__)
+        return AIRequestError("DNS 错误", f"无法解析 {provider} 服务地址。", provider=provider, model=model, local_exception=type(exc).__name__, request_sent=request_sent)
     if isinstance(exc, ssl.SSLError):
-        return AIRequestError("TLS/SSL 错误", f"与 {provider} 服务建立安全连接失败。", provider=provider, model=model, local_exception=type(exc).__name__)
+        return AIRequestError("TLS/SSL 错误", f"与 {provider} 服务建立安全连接失败。", provider=provider, model=model, local_exception=type(exc).__name__, request_sent=request_sent)
     if isinstance(exc, TimeoutError):
         return AIRequestError("请求超时", f"{provider} 请求超时。", provider=provider, model=model, local_exception=type(exc).__name__, request_sent=request_sent)
     status = _status_from_exception(exc)
-    message = _message_from_exception(exc)
+    message = redact_secrets(_message_from_exception(exc), secrets)
     return AIRequestError(
         category=_category_for_status(status, message, provider), message=message, provider=provider, model=model, http_status=status,
         provider_code=str(getattr(exc, "code", "") or ""), retry_after=_header_value(exc, "retry-after"),
         request_id=_header_value(exc, "x-request-id") or _header_value(exc, "x-goog-request-id"),
         local_exception=type(exc).__name__, request_sent=request_sent,
     )
+
+
+def redact_secrets(text: str, secrets: tuple[str, ...] = ()) -> str:
+    """Keep provider diagnostics useful without echoing authorization material."""
+    result = str(text)
+    for secret in secrets:
+        if secret:
+            result = result.replace(secret, "[REDACTED]")
+    result = re.sub(r"(?i)\bBearer\s+[^\s\"',;}]+", "Bearer [REDACTED]", result)
+    result = re.sub(r"(?i)(\b(?:api[_-]?key|x-goog-api-key|authorization)\b[\"']?\s*[:=]\s*[\"']?)[^\s\"'&,;}]+", r"\1[REDACTED]", result)
+    result = re.sub(r"\b(?:sk-[A-Za-z0-9_-]{8,}|AIza[A-Za-z0-9_-]{20,})\b", "[REDACTED]", result)
+    return result
+
+
+def safe_validation_errors(errors: ValidationError | list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Omit echoed inputs and exception context from UI and log diagnostics."""
+    if isinstance(errors, ValidationError):
+        errors = errors.errors(include_url=False, include_input=False, include_context=False)
+    return [
+        {"loc": tuple(redact_secrets(str(part)) if isinstance(part, str) else part for part in item.get("loc", ())),
+         "type": str(item.get("type", "validation_error")),
+         "msg": redact_secrets(str(item.get("msg", "invalid value")))}
+        for item in errors
+    ]
 
 
 def _status_from_exception(exc: Exception) -> int | None:

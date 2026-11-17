@@ -4,11 +4,14 @@ import json
 import os
 import subprocess
 import time
+import ipaddress
+from tempfile import TemporaryFile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 from urllib.error import URLError
 from urllib.request import Request, urlopen
+from urllib.parse import urlsplit
 
 import psutil
 
@@ -30,7 +33,7 @@ class JarvisArtServiceManager:
     and invokes that existing launcher when the user asks to start local AI.
     """
 
-    _owned_pids: set[int] = set()
+    _owned_pids: dict[int, float] = {}
 
     def __init__(self, root: str = "", endpoint: str = "http://127.0.0.1:8765", *, opener: Callable = urlopen) -> None:
         self.root = self.discover_root(root)
@@ -57,6 +60,10 @@ class JarvisArtServiceManager:
 
     def status(self) -> JarvisArtServiceStatus:
         try:
+            self._validate_endpoint()
+        except ValueError as exc:
+            return JarvisArtServiceStatus("Error", str(exc), endpoint=self.endpoint)
+        try:
             health = self._request_json("/health", timeout=2.5)
         except (OSError, URLError, ValueError):
             root = str(self.root) if self.root else ""
@@ -70,28 +77,44 @@ class JarvisArtServiceManager:
         return JarvisArtServiceStatus("Loading", detail or "JarvisArt 模型正在启动。", model, str(self.root or ""), self.endpoint)
 
     def start(self, timeout_seconds: float = 180.0) -> JarvisArtServiceStatus:
-        before = self._listener_pids()
         current = self.status()
+        if current.state == "Error":
+            return current
         if current.state == "Ready":
             return current
+        before = self._listener_pids()
         if not self.root:
             return JarvisArtServiceStatus("Error", "未检测到 JarvisArt；请在设置中选择 JarvisArt 根目录。", endpoint=self.endpoint)
         launcher = self.root / "scripts" / "launch_services.ps1"
         try:
-            result = subprocess.run(
-                ["powershell.exe", "-NoProfile", "-File", str(launcher), "-WaitForReady"],
-                cwd=str(self.root), capture_output=True, text=True, timeout=timeout_seconds,
-            )
+            # The PowerShell launcher starts long-lived model/backend children.
+            # On Windows those children can inherit pipe handles, so
+            # capture_output/communicate waits for EOF even after the launcher
+            # exits. A file-backed capture has no inherited-EOF dependency.
+            with TemporaryFile(mode="w+", encoding="utf-8", errors="replace") as output:
+                result = subprocess.run(
+                    ["powershell.exe", "-NoProfile", "-File", str(launcher), "-WaitForReady"],
+                    cwd=str(self.root), stdout=output, stderr=subprocess.STDOUT, timeout=timeout_seconds,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
+                output.seek(0)
+                launcher_output = output.read()
         except subprocess.TimeoutExpired:
             return JarvisArtServiceStatus("Error", "JarvisArt 启动超时。", root=str(self.root), endpoint=self.endpoint)
+        except OSError as exc:
+            return JarvisArtServiceStatus("Error", f"无法运行 JarvisArt 启动器：{type(exc).__name__}", root=str(self.root), endpoint=self.endpoint)
         if result.returncode != 0:
-            detail = (result.stderr or result.stdout or "JarvisArt 启动失败。").strip()[-500:]
+            detail = (launcher_output or "JarvisArt 启动失败。").strip()[-500:]
             return JarvisArtServiceStatus("Error", detail, root=str(self.root), endpoint=self.endpoint)
         deadline = time.monotonic() + 8.0
         while time.monotonic() < deadline:
             status = self.status()
             if status.state == "Ready":
-                self._owned_pids.update(self._listener_pids() - before)
+                for pid in self._listener_pids() - before:
+                    try:
+                        self._owned_pids[pid] = psutil.Process(pid).create_time()
+                    except psutil.Error:
+                        pass
                 return status
             time.sleep(0.5)
         return self.status()
@@ -100,6 +123,8 @@ class JarvisArtServiceManager:
         for pid in tuple(self._owned_pids):
             try:
                 process = psutil.Process(pid)
+                if process.create_time() != self._owned_pids[pid]:
+                    continue  # A terminated child's PID may now belong to another app.
                 command = " ".join(process.cmdline()).lower()
                 if "jarvisart" in command or "llama-server" in command or "server.py" in command:
                     process.terminate()
@@ -110,13 +135,31 @@ class JarvisArtServiceManager:
             except (psutil.Error, OSError):
                 pass
             finally:
-                self._owned_pids.discard(pid)
+                self._owned_pids.pop(pid, None)
         return self.status()
 
     def _listener_pids(self) -> set[int]:
-        return {connection.pid for connection in psutil.net_connections(kind="tcp") if connection.status == psutil.CONN_LISTEN and connection.laddr.port in {8002, 8765} and connection.pid}
+        try:
+            port = urlsplit(self.endpoint).port or 80
+            return {connection.pid for connection in psutil.net_connections(kind="tcp") if connection.status == psutil.CONN_LISTEN and connection.laddr.port in {8002, port} and connection.pid}
+        except (psutil.Error, OSError):
+            return set()
+
+    def _validate_endpoint(self) -> None:
+        endpoint = urlsplit(self.endpoint)
+        if endpoint.scheme not in {"http", "https"} or endpoint.username or endpoint.password or endpoint.query or endpoint.fragment:
+            raise ValueError("JarvisArt endpoint 必须是本机 HTTP 地址，不包含凭据、查询参数或片段。")
+        host = (endpoint.hostname or "").lower()
+        try:
+            local = host == "localhost" or ipaddress.ip_address(host).is_loopback
+        except ValueError:
+            local = False
+        if not local:
+            raise ValueError("JarvisArt Local 只允许 127.0.0.1、::1 或 localhost；不会向远程地址发送预览。")
+        endpoint.port  # Validate malformed port syntax without connecting.
 
     def _request_json(self, path: str, timeout: float) -> dict:
+        self._validate_endpoint()
         request = Request(self.endpoint + path, headers={"Accept": "application/json"})
         with self._opener(request, timeout=timeout) as response:
             payload = json.loads(response.read().decode("utf-8"))

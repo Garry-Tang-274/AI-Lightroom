@@ -18,9 +18,14 @@ class SessionStore:
 
     def save(self, path: Path, state: EditorState, history: HistoryManager) -> None:
         key = self._key(path)
+        # Keep the active cursor inside the retained window, including its redo branch.
+        start = max(0, history.cursor - 25)
+        entries = history.entries[start:start + 50]
         payload = {
+            "version": 2,
             "state": state.model_dump(mode="json"),
-            "history": [{"label": entry.label, "state": entry.state.model_dump(mode="json")} for entry in history.entries[-50:]],
+            "cursor": history.cursor - start,
+            "history": [{"label": entry.label, "state": entry.state.model_dump(mode="json")} for entry in entries],
         }
         self.settings.setValue(f"sessions/{key}", json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
         self.settings.sync()
@@ -31,6 +36,27 @@ class SessionStore:
         except (TypeError, ValueError):
             return None
         return payload if isinstance(payload, dict) else None
+
+    @staticmethod
+    def restore(payload: dict, history: HistoryManager) -> EditorState:
+        """Recover the active state and redo branch; migrate cursor-less v1 sessions."""
+        state = EditorState.model_validate(payload["state"])
+        entries = payload.get("history", [])
+        if not entries:
+            history.reset(state, "恢复编辑")
+            return state
+        validated = [(EditorState.model_validate(item["state"]), str(item.get("label", "编辑"))) for item in entries]
+        history.reset(validated[0][0], validated[0][1])
+        for saved, label in validated[1:]:
+            history.push(saved, label)
+        cursor = payload.get("cursor")
+        if not isinstance(cursor, int) or not 0 <= cursor < len(history.entries):
+            cursor = next((i for i, entry in enumerate(history.entries) if entry.state == state), -1)
+        if cursor >= 0 and history.entries[cursor].state == state:
+            history.restore(cursor)
+        else:
+            history.push(state, "恢复编辑")
+        return state
 
     @staticmethod
     def _key(path: Path) -> str:

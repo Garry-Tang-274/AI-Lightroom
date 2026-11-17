@@ -20,6 +20,8 @@ def generate_mask(source: np.ndarray, layer: MaskLayer) -> np.ndarray:
     if source.dtype != np.uint8 or source.ndim != 3 or source.shape[2] != 3:
         raise ValueError("source must be RGB uint8")
     height, width = source.shape[:2]
+    if not height or not width:
+        raise ValueError("source must not be empty")
     cache_key = None
     if layer.type in {MaskType.SKY, MaskType.SUBJECT, MaskType.SEMANTIC}:
         cache_key = (
@@ -27,7 +29,7 @@ def generate_mask(source: np.ndarray, layer: MaskLayer) -> np.ndarray:
             source.shape,
             source.strides,
             layer.type.value,
-            layer.semantic_label,
+            layer.semantic_label or str(layer.parameters.get("label", "subject")),
         )
         cached = _cache_get(cache_key, source)
         if cached is not None:
@@ -72,12 +74,14 @@ def _cache_get(key: tuple, source: np.ndarray) -> np.ndarray | None:
             del _SEMANTIC_CACHE[key]
             return None
         _SEMANTIC_CACHE.move_to_end(key)
-        return packed.astype(np.float32) / 255.0
+        return packed
 
 
 def _cache_put(key: tuple, source: np.ndarray, mask: np.ndarray) -> None:
     global _cache_bytes
-    packed = np.clip(np.rint(mask * 255.0), 0, 255).astype(np.uint8)
+    # Keep the exact mask: uint8 packing changed a first render's result on
+    # subsequent cache hits, causing small but visible preview/export drift.
+    packed = np.ascontiguousarray(mask, dtype=np.float32)
     with _CACHE_LOCK:
         previous = _SEMANTIC_CACHE.pop(key, None)
         if previous is not None:
@@ -90,8 +94,12 @@ def _cache_put(key: tuple, source: np.ndarray, mask: np.ndarray) -> None:
 
 
 def _coordinates(height: int, width: int) -> tuple[np.ndarray, np.ndarray]:
-    y, x = np.mgrid[0:height, 0:width].astype(np.float32)
-    return x / max(width - 1, 1), y / max(height - 1, 1)
+    # Broadcasting avoids two full-sized coordinate grids (and the temporary
+    # int64 grids) for every gradient on a full-resolution photograph.
+    return (
+        np.linspace(0, 1, width, dtype=np.float32)[None, :],
+        np.linspace(0, 1, height, dtype=np.float32)[:, None],
+    )
 
 
 def _linear(height: int, width: int, params: dict) -> np.ndarray:
@@ -125,8 +133,8 @@ def _luminance_range(source: np.ndarray, params: dict, feather: float) -> np.nda
     low = float(params.get("min", 0.55))
     high = float(params.get("max", 1.0))
     softness = max(0.01, feather * 0.25)
-    rising = _smoothstep(low - softness, low + softness, luma)
-    falling = 1.0 - _smoothstep(high - softness, high + softness, luma)
+    rising = np.ones_like(luma) if low <= 0 else _smoothstep(low - softness, low + softness, luma)
+    falling = np.ones_like(luma) if high >= 1 else 1.0 - _smoothstep(high - softness, high + softness, luma)
     return rising * falling
 
 
@@ -165,13 +173,11 @@ def _top_connected(binary: np.ndarray) -> np.ndarray:
     count, labels, stats, _ = cv2.connectedComponentsWithStats(binary, connectivity=8)
     if count <= 1:
         return binary
-    output = np.zeros_like(binary)
     top_band = max(2, binary.shape[0] // 30)
-    for label in range(1, count):
-        component = labels == label
-        if np.any(component[:top_band]) or stats[label, cv2.CC_STAT_AREA] > binary.size * 0.12:
-            output[component] = 1
-    return output
+    keep = stats[:, cv2.CC_STAT_AREA] > binary.size * 0.12
+    keep[np.unique(labels[:top_band])] = True
+    keep[0] = False
+    return keep[labels].astype(np.uint8)
 
 
 def _subject(source: np.ndarray) -> np.ndarray:
@@ -233,14 +239,12 @@ def _local_texture(luma: np.ndarray) -> np.ndarray:
 def _largest_components(score: np.ndarray, threshold: float) -> np.ndarray:
     binary = (score > threshold).astype(np.uint8)
     count, labels, stats, _ = cv2.connectedComponentsWithStats(binary, connectivity=8)
-    output = np.zeros_like(score, dtype=np.float32)
     if count <= 1:
-        return output
+        return np.zeros_like(score, dtype=np.float32)
     area_floor = score.size * 0.003
-    for component in range(1, count):
-        if stats[component, cv2.CC_STAT_AREA] >= area_floor:
-            output[labels == component] = 1.0
-    return output
+    keep = stats[:, cv2.CC_STAT_AREA] >= area_floor
+    keep[0] = False
+    return keep[labels].astype(np.float32)
 
 
 def _road(source: np.ndarray) -> np.ndarray:
@@ -315,6 +319,8 @@ def _building(source: np.ndarray) -> np.ndarray:
 
 
 def _people(source: np.ndarray) -> np.ndarray:
+    if source.shape[0] < 128 or source.shape[1] < 64:
+        return np.zeros(source.shape[:2], dtype=np.float32)
     detector = cv2.HOGDescriptor()
     detector.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
     rectangles, weights = detector.detectMultiScale(source, winStride=(8, 8), padding=(8, 8), scale=1.05)

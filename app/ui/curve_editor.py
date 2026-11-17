@@ -30,11 +30,15 @@ class CurveEditor(QWidget):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setMinimumHeight(170)
-        self.setMinimumWidth(240)
+        self.setMinimumWidth(210)
         self.setMouseTracking(True)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setAccessibleName("色调曲线")
+        self.setToolTip("点击添加控制点，拖动调整；右键删除中间控制点。")
         self._curve = ToneCurve()
         self._channel = "rgb"
         self._drag_index: int | None = None
+        self._selected_index: int | None = None
 
     def set_channel(self, channel: str) -> None:
         self._channel = channel
@@ -42,6 +46,8 @@ class CurveEditor(QWidget):
 
     def set_curve(self, curve: ToneCurve) -> None:
         self._curve = curve.model_copy(deep=True)
+        self._drag_index = None
+        self._selected_index = None
         self.update()
 
     def curve(self) -> ToneCurve:
@@ -81,7 +87,10 @@ class CurveEditor(QWidget):
             if nearest not in (0, len(self._curve.points) - 1) and distance < 14:
                 points = self._curve.points.copy()
                 points.pop(nearest)
+                self.interaction_started.emit()
                 self._set_points(points)
+                self._selected_index = None
+                self.interaction_finished.emit()
             return
         if event.button() != Qt.MouseButton.LeftButton:
             return
@@ -90,10 +99,20 @@ class CurveEditor(QWidget):
             self._drag_index = nearest
         else:
             new_point = self._from_widget(event.position())
+            # Clicking vertically above an existing point must move it, not
+            # construct duplicate x values rejected by the shared curve model.
+            same_x = next((index for index, point in enumerate(self._curve.points)
+                           if abs(point.x - new_point.x) < 0.002), None)
+            if same_x is not None:
+                self._drag_index = same_x
+                self.mouseMoveEvent(event)
+                self._selected_index = same_x
+                return
             points = self._curve.points + [new_point]
             points.sort(key=lambda point: point.x)
             self._set_points(points)
             self._drag_index = min(range(len(points)), key=lambda index: abs(points[index].x - new_point.x))
+        self._selected_index = self._drag_index
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - Qt API
         if self._drag_index is None:
@@ -111,8 +130,23 @@ class CurveEditor(QWidget):
         self._set_points(points)
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - Qt API
+        if self._drag_index is None or event.button() != Qt.MouseButton.LeftButton:
+            return super().mouseReleaseEvent(event)
         self._drag_index = None
         self.interaction_finished.emit()
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802
+        index = self._selected_index
+        if event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace) and index is not None and 0 < index < len(self._curve.points) - 1:
+            self.interaction_started.emit()
+            points = self._curve.points.copy()
+            points.pop(index)
+            self._set_points(points)
+            self._selected_index = None
+            self.interaction_finished.emit()
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     def _plot_rect(self) -> QRectF:
         return QRectF(8, 8, max(1, self.width() - 16), max(1, self.height() - 16))
@@ -138,6 +172,11 @@ class CurveEditor(QWidget):
         self.curve_changed.emit(self.curve())
 
 
+class CurveChannelSelector(QComboBox):
+    def wheelEvent(self, event) -> None:  # noqa: N802
+        event.ignore()
+
+
 class CurvePanel(QWidget):
     curve_changed = Signal(str, object)
     interaction_started = Signal()
@@ -145,10 +184,11 @@ class CurvePanel(QWidget):
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self.channel = QComboBox()
+        self.channel = CurveChannelSelector()
         for key, label in CHANNEL_LABELS.items():
             self.channel.addItem(label, key)
-        self.reset_button = QPushButton("重置曲线")
+        self.reset_button = QPushButton("重置")
+        self.reset_button.setToolTip("重置当前通道曲线")
         self.editor = CurveEditor()
 
         top = QHBoxLayout()
@@ -159,6 +199,10 @@ class CurvePanel(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addLayout(top)
         layout.addWidget(self.editor)
+        hint = QLabel("点击加点 · 拖动调整 · 右键删点")
+        hint.setObjectName("mutedLabel")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
 
         self._state = EditorState()
         self.channel.currentIndexChanged.connect(self._channel_selected)
@@ -185,6 +229,8 @@ class CurvePanel(QWidget):
         self.curve_changed.emit(key, curve)
 
     def _reset(self) -> None:
+        self.interaction_started.emit()
         curve = ToneCurve()
         self.editor.set_curve(curve)
         self._curve_edited(curve)
+        self.interaction_finished.emit()

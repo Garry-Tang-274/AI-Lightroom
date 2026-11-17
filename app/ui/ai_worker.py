@@ -6,7 +6,7 @@ from PySide6.QtCore import QObject, QRunnable, QSettings, Signal, Slot
 from app.ai.errors import AIRequestError, error_from_exception
 from app.ai.orchestrator import AIOrchestrator
 from app.ai.provider_registry import provider_registry
-from app.ai.usage import AIUsageManager
+from app.ai.usage import AIUsageManager, CloudRequestTracker
 from app.core.editor_state import EditorState
 from app.utils.config import RuntimeSettings
 from app.utils.io_utils import make_preview
@@ -44,29 +44,28 @@ class AIEditWorker(QRunnable):
         provider_name = config.display_name
         model = config.model
         usage = AIUsageManager(QSettings("AI Lightroom", "AI Lightroom"))
+        tracker = CloudRequestTracker(usage, provider_name, model, cloud=use_cloud, cancelled=lambda: self._cancelled)
         try:
+            tracker.check_cancelled()
             provider = provider_registry.create(
                 config, self.api_key,
                 system_prompt=self.settings.system_prompt,
-                on_request_started=lambda: usage.record_started_request(provider_name, model),
-                on_result=lambda result, input_tokens, output_tokens, total_tokens: usage.record_result(
-                    provider_name, model, result,
-                    input_tokens=input_tokens, output_tokens=output_tokens, total_tokens=total_tokens,
-                ),
+                on_request_started=tracker.started,
+                on_result=tracker.result,
             )
             analysis_source = make_preview(self.source_pixels, self.settings.active_ai_preview_size)
             orchestrator = AIOrchestrator(
                 provider, preview_size=self.settings.active_ai_preview_size,
                 reinspection_enabled=self.settings.ai_reinspection,
                 max_vision_calls=self.settings.max_vision_calls,
+                check_cancelled=tracker.check_cancelled,
             )
             result = orchestrator.process(self.instruction, analysis_source, self.state, self.history_summary, self.selected_mask_id)
-            if self._cancelled:
-                raise AIRequestError("已取消本地等待", "取消只停止本地等待；已发出的云端请求可能仍计入调用。", provider=provider_name, model=model, request_sent=use_cloud)
+            tracker.check_cancelled()
         except Exception as exc:
-            error = error_from_exception(exc, model=model, request_sent=use_cloud, provider=provider_name)
-            if use_cloud and error.request_sent:
-                usage.record_result(provider_name, model, error.category)
+            error = error_from_exception(exc, model=model, request_sent=tracker.request_sent, provider=provider_name, secrets=(self.api_key,))
+            error.request_sent = error.request_sent or tracker.request_sent
+            tracker.result(error.category)
             self.signals.failed.emit(error)
             return
         self.signals.finished.emit(result)

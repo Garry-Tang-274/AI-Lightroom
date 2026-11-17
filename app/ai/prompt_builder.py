@@ -19,10 +19,14 @@ def build_prompt(request: PlanningRequest, system_prompt: str = DEFAULT_SYSTEM_P
         }
         for layer in request.state.masks
     ]
+    # Watermark asset identifiers and long brush strokes are local rendering inputs,
+    # not model capabilities. Only transmit editable state and mask references.
+    editor_state = request.state.model_dump(mode="json", exclude={"watermarks", "masks"})
+    editor_state["masks"] = masks
     payload = {
         "user_instruction": request.instruction,
         "is_reinspection": request.is_reinspection,
-        "current_editor_state": request.state.model_dump(mode="json"),
+        "current_editor_state": editor_state,
         "current_masks": masks,
         "recent_history": request.history_summary[-8:],
         "available_tools": AVAILABLE_TOOLS,

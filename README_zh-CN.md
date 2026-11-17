@@ -16,13 +16,14 @@ AI Lightroom 是一款 Windows 桌面照片编辑器：传统参数调色与自�
 
 **[中文新手完整指南](docs/GETTING_STARTED_zh-CN.md)** · [English getting-started guide](docs/GETTING_STARTED.md)
 
-日常使用可先看[手动修图与文字调色示例](docs/EDITING_WORKFLOWS.md)。当前打包版本为 v1.0.3。
+日常使用可先看[手动修图与文字调色示例](docs/EDITING_WORKFLOWS.md)。**v1.1.0 工作区与稳定性升级**的主要变化见[中英双语发布说明](docs/RELEASE_1_1.md)。
 
 ## 已支持的功能
 
-- JPG / PNG 导入、拖入打开、缩放、适合窗口、直方图、原图对比、撤回/重做与编辑恢复。
-- 实时基础参数、HSL、RGB/通道曲线、色彩分级、局部蒙版、画笔蒙版和非破坏性水印。
-- 从原始全分辨率照片渲染导出 JPG / PNG，并尽量保留 EXIF、ICC 与 DPI。
+- JPG / PNG 后台载入、拖入打开、缩放、直方图、可拖动左右对比、专注模式、撤回/重做与编辑恢复。
+- 右侧独立的“调色 / AI 助手”页；调色参数按明暗、色彩、HSL、曲线、分级、细节/降噪、效果、光学、几何和校准分组，可折叠并按中英文名称搜索。
+- 局部蒙版、画笔蒙版和非破坏性水印；渐变与范围参数、自定义水印位置均可手动修改。
+- 从原始全分辨率照片以 sRGB 工作色彩空间渲染导出 JPG / PNG，并保留可用的 EXIF 与 DPI。
 - Gemini、OpenAI、Qwen / DashScope、DeepSeek 文本增量、Custom OpenAI-compatible、JarvisArt Local GGUF 与离线 Mock。
 - API 调用默认无自动重试；云端调用有本地每日安全上限。
 
@@ -31,7 +32,7 @@ AI Lightroom 是一款 Windows 桌面照片编辑器：传统参数调色与自�
 | 你想做什么 | 需要什么 | 从哪里开始 |
 | --- | --- | --- |
 | 纯手动修图 | 无账号、无 API Key | 下载后直接运行即可。 |
-| 使用云端 AI 调色 | 对应服务商的 API Key | 在 **文件 → 设置 → AI** 选择 Provider 并测试连接。 |
+| 使用云端 AI 调色 | 对应服务商的 API Key | 在 **文件 → 设置 → AI 服务**选择 Provider 并测试连接。 |
 | 本地运行 JarvisArt | 独立安装的 JarvisArt、模型与本地桥接服务 | 阅读 [JarvisArt 本地部署与连接说明](docs/JARVISART_zh-CN.md)。 |
 
 ## JarvisArt Local 效果示例
@@ -45,13 +46,15 @@ AI Lightroom 是一款 Windows 桌面照片编辑器：传统参数调色与自�
 ## 快速操作
 
 1. 从 GitHub Releases 下载 Windows 安装包或 ZIP；安装包最简单，ZIP 必须完整解压后再运行。
-2. 打开或拖入 JPG / PNG 照片。右侧滑块、HSL、曲线、蒙版与水印都可直接使用。
-3. `Ctrl+S` 导出。默认不会覆盖原始照片。
-4. 如需 AI，在 **文件 → 设置** 配置 Provider；AI 输入框中 `Ctrl+Enter` 发送，`Enter` 换行。
+2. 打开或拖入 JPG / PNG 照片。在右侧**调色**页折叠或搜索参数；左侧有**蒙版**与**水印**。
+3. 按 `C` 打开可拖动的左右对比，按 `Ctrl+Tab` 切换专注模式；`Ctrl+S` 导出一份全尺寸成片。程序会拒绝覆盖当前原图。
+4. 如需 AI，在 **文件 → 设置 → AI 服务**配置 Provider；切换右侧 **AI 助手**页，`Ctrl+Enter` 发送，`Enter` 换行。
 
 ## 预览质量与 AI 发送质量
 
 工具栏的 **低清预览 / 高清预览** 按钮可以立即切换工作画布；也可在 **文件 → 设置 → 性能与导出** 中选择。
+
+拖动期间临时使用快速预览：默认**平衡**模式最长边为 **1280 px**，**省电**为 **768 px**，**精细交互**为 **1600 px**，可在**设置 → 性能与导出 → 性能模式**选择。松手恢复所选质量，不影响 AI 发送质量和最终全尺寸导出。画布的 100% 指工作预览像素。
 
 - **自动（默认）**：云端 Provider 默认低清，减少上传和费用；**JarvisArt Local GGUF** 默认高清，因为它在本机运行。
 - **低清** 默认最长边为 1536 px；**高清** 默认最长边为 3072 px；两个数值都可以修改。

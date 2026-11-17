@@ -12,6 +12,7 @@ from urllib.request import Request, urlopen
 from app.ai.errors import AIRequestError
 from app.ai.jarvisart.schemas import JarvisArtNativePlan
 from app.ai.jarvisart.service import JarvisArtServiceManager
+from app.ai.jarvisart.support_matrix import operation_support
 from app.core.editor_state import EditorState
 
 
@@ -115,47 +116,11 @@ class LocalJarvisArtRuntime(JarvisArtRuntime):
 
 
 def parse_jarvisart_lua(lua: str) -> JarvisArtNativePlan:
-    return _parse_complete_jarvisart_lua(lua)
-
-    """Parse the scalar Lightroom Lua returned by the existing local bridge.
-
-    This deliberately accepts only a compact safe subset. Unknown Lightroom
-    settings remain visible as unsupported operations instead of being guessed.
-    """
-    source = lua.removeprefix("return").strip()
-    scalar_pairs = re.findall(r'(?:\["([^"\\]+)"\]|([A-Za-z_][A-Za-z0-9_]*))\s*=\s*(-?\d+(?:\.\d+)?)', source)
-    hsl: dict[str, dict[str, float]] = {}
-    global_adjustments: list[dict[str, object]] = []
-    unsupported: list[dict[str, str]] = []
-    known = {
-        "Exposure2012", "Contrast2012", "Highlights2012", "Shadows2012", "Whites2012", "Blacks2012",
-        "IncrementalTemperature", "IncrementalTint", "Saturation", "Vibrance", "Clarity2012", "Texture", "Dehaze", "Sharpness", "PostCropVignetteAmount",
-    }
-    for quoted, bare, raw_value in scalar_pairs:
-        parameter = quoted or bare
-        value = float(raw_value)
-        match = re.fullmatch(r"(Hue|Saturation|Luminance)Adjustment(Red|Orange|Yellow|Green|Aqua|Blue|Purple|Magenta)", parameter)
-        if match:
-            field = {"Hue": "hue", "Saturation": "saturation", "Luminance": "luminance"}[match.group(1)]
-            hsl.setdefault(match.group(2).lower(), {})[field] = value
-        elif parameter in known:
-            global_adjustments.append({"parameter": parameter, "value": value})
-        elif parameter not in {"ProcessVersion", "Temperature", "Tint", "WhiteBalance"}:
-            unsupported.append({"operation": parameter, "reason": "当前 AI Lightroom 本地渲染器不支持该 JarvisArt Lightroom 参数"})
-    if not scalar_pairs:
-        raise AIRequestError("JarvisArt 原生输出无效", "本地 JarvisArt GGUF 服务未返回可解析的 Lightroom 参数。", provider="JarvisArt Local GGUF", model="qwen2_vl")
-    return JarvisArtNativePlan.model_validate({
-        "summary": "JarvisArt 已生成本地 Lightroom 调整方案。",
-        "reasoning_summary": "已将 JarvisArt 返回的 Lightroom 全局参数安全映射到当前编辑器。",
-        "global_adjustments": global_adjustments,
-        "hsl_adjustments": [{"color": color, **values} for color, values in hsl.items()],
-        "curves": [], "local_regions": [], "unsupported_operations": unsupported, "confidence": 0.78,
-    })
-
-
-def _parse_complete_jarvisart_lua(lua: str) -> JarvisArtNativePlan:
     """Read the full top-level Lightroom table without evaluating Lua."""
-    assignments = _top_level_lua_assignments(lua.removeprefix("return").strip())
+    try:
+        assignments = _top_level_lua_assignments(lua.strip())
+    except ValueError as exc:
+        raise _invalid_native_output(str(exc)) from exc
     if not assignments:
         raise AIRequestError(
             "JarvisArt 原生输出无效",
@@ -175,14 +140,21 @@ def _parse_complete_jarvisart_lua(lua: str) -> JarvisArtNativePlan:
     }
     for parameter, raw_value in assignments.items():
         if parameter in curve_channels:
-            points = _tone_curve_points(raw_value)
-            if points:
-                curves.append({"channel": curve_channels[parameter], "points": points})
+            try:
+                points = _tone_curve_points(raw_value)
+            except ValueError as exc:
+                raise _invalid_native_output(f"{parameter}: {exc}") from exc
+            curves.append({"channel": curve_channels[parameter], "points": points})
             continue
         value = _lua_number(raw_value)
         if value is None:
-            if parameter in {"LensProfileSetup", "LensProfileName", "CameraProfile"}:
-                unsupported.append({"operation": parameter, "reason": "需要 Lightroom 专有镜头或相机配置文件"})
+            support = operation_support(parameter)
+            if support.supported and support.target is None:
+                continue
+            if support.supported:
+                raise _invalid_native_output(f"{parameter} 需要数值，返回的类型不正确。")
+            reason = "需要 Lightroom 专有镜头或相机配置文件" if parameter in {"LensProfileSetup", "LensProfileName", "CameraProfile"} else support.reason
+            unsupported.append({"operation": parameter, "reason": reason})
             continue
         match = re.fullmatch(r"(Hue|Saturation|Luminance)Adjustment(Red|Orange|Yellow|Green|Aqua|Blue|Purple|Magenta)", parameter)
         if match:
@@ -192,7 +164,7 @@ def _parse_complete_jarvisart_lua(lua: str) -> JarvisArtNativePlan:
             global_adjustments.append({"parameter": parameter, "value": value})
     return JarvisArtNativePlan.model_validate({
         "summary": "JarvisArt 已生成本地 Lightroom 调整方案。",
-        "reasoning_summary": "已将 JarvisArt 返回的完整 Lightroom Develop 参数映射到当前编辑器。",
+        "reasoning_summary": "已解析 Lightroom Develop 参数；可执行项交由本地渲染，未支持项单独报告。",
         "global_adjustments": global_adjustments,
         "hsl_adjustments": [{"color": color, **values} for color, values in hsl.items()],
         "curves": curves,
@@ -202,39 +174,34 @@ def _parse_complete_jarvisart_lua(lua: str) -> JarvisArtNativePlan:
     })
 
 
+def _invalid_native_output(message: str) -> AIRequestError:
+    return AIRequestError("JarvisArt 原生输出无效", message,
+                          provider="JarvisArt Local GGUF", model="qwen2_vl")
+
+
 def _top_level_lua_assignments(source: str) -> dict[str, str]:
-    """Read only root key/value pairs; never execute Lua content."""
-    begin = source.find("{")
-    if begin < 0:
-        return {}
+    """Read a complete data table, rejecting truncated or executable content."""
+    source = re.sub(r"^return\s+", "", source).strip()
+    if not source.startswith("{"):
+        raise ValueError("返回内容不是 Lightroom 参数表。")
     values: dict[str, str] = {}
-    index = begin + 1
+    index = 1
     size = len(source)
     while index < size:
-        while index < size and (source[index].isspace() or source[index] == ","):
-            index += 1
-        if index >= size or source[index] == "}":
-            break
-        if source[index] == "[":
-            closing = source.find("]", index + 1)
-            if closing < 0:
-                break
-            key = source[index + 1:closing].strip().strip("'\"")
-            index = closing + 1
-        else:
-            match = re.match(r"[A-Za-z_][A-Za-z0-9_]*", source[index:])
-            if match is None:
-                index += 1
-                continue
-            key = match.group(0)
-            index += len(key)
         while index < size and source[index].isspace():
             index += 1
-        if index >= size or source[index] != "=":
-            while index < size and source[index] not in ",}":
-                index += 1
-            continue
-        index += 1
+        if index < size and source[index] == "}":
+            if source[index + 1:].strip() not in {"", ";"}:
+                raise ValueError("参数表结束后包含额外内容。")
+            return values
+        match = re.match(r"""(?:\[\s*["']([A-Za-z_][A-Za-z0-9_]*)["']\s*\]|([A-Za-z_][A-Za-z0-9_]*))\s*=""",
+                         source[index:])
+        if match is None:
+            raise ValueError("参数表不完整或键名格式错误。")
+        key = match.group(1) or match.group(2)
+        if key in values:
+            raise ValueError(f"参数 {key} 重复，未执行有歧义的方案。")
+        index += len(match.group(0))
         while index < size and source[index].isspace():
             index += 1
         start = index
@@ -261,24 +228,43 @@ def _top_level_lua_assignments(source: str) -> dict[str, str]:
                         index += 1
                         break
                 index += 1
+            if depth != 0 or quote:
+                raise ValueError(f"{key} 的嵌套参数表被截断。")
         elif index < size and source[index] in "'\"":
             quote = source[index]
             index += 1
+            escaped = False
+            closed = False
             while index < size:
-                if source[index] == quote and source[index - 1] != "\\":
+                if escaped:
+                    escaped = False
+                elif source[index] == "\\":
+                    escaped = True
+                elif source[index] == quote:
                     index += 1
+                    closed = True
                     break
                 index += 1
+            if not closed:
+                raise ValueError(f"{key} 的字符串被截断。")
         else:
             while index < size and source[index] not in ",}":
                 index += 1
         values[key] = source[start:index].strip()
-    return values
+        if not values[key]:
+            raise ValueError(f"{key} 缺少值。")
+        while index < size and source[index].isspace():
+            index += 1
+        if index < size and source[index] == ",":
+            index += 1
+        elif index >= size or source[index] != "}":
+            raise ValueError("参数表被截断或缺少分隔符。")
+    raise ValueError("参数表被截断，未执行任何调整。")
 
 
 def _lua_number(raw_value: str) -> float | None:
     value = raw_value.strip()
-    if re.fullmatch(r"-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?", value):
+    if re.fullmatch(r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?", value):
         return float(value)
     if value == "true":
         return 1.0
@@ -288,15 +274,36 @@ def _lua_number(raw_value: str) -> float | None:
 
 
 def _tone_curve_points(raw_value: str) -> list[dict[str, float]]:
-    indexed = re.findall(r"\[\s*(-?\d+(?:\.\d+)?)\s*\]\s*=\s*(-?\d+(?:\.\d+)?)", raw_value)
+    number = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?"
+    if not raw_value.startswith("{") or not raw_value.endswith("}"):
+        raise ValueError("曲线必须是控制点参数表。")
+    indexed_pattern = rf"\[\s*({number})\s*\]\s*=\s*({number})"
+    indexed = re.findall(indexed_pattern, raw_value)
     if indexed:
-        pairs = [(float(x), float(y)) for x, y in indexed]
+        if re.sub(indexed_pattern, "", raw_value).strip(" \n\r\t{},"):
+            raise ValueError("曲线包含无法解析的控制点。")
+        items = [(float(x), float(y)) for x, y in indexed]
+        indices = [item[0] for item in items]
+        if len(set(indices)) != len(indices):
+            raise ValueError("曲线索引重复。")
+        if len(items) >= 4 and set(indices) in (set(range(len(items))), set(range(1, len(items) + 1))):
+            numbers = [y for _, y in sorted(items)]
+            if len(numbers) % 2:
+                raise ValueError("曲线坐标必须成对。")
+            pairs = list(zip(numbers[::2], numbers[1::2]))
+        else:
+            pairs = items
     else:
-        numbers = [float(value) for value in re.findall(r"-?\d+(?:\.\d+)?", raw_value)]
+        if re.sub(number, "", raw_value).strip(" \n\r\t{},"):
+            raise ValueError("曲线包含无法解析的数值。")
+        numbers = [float(value) for value in re.findall(number, raw_value)]
+        if len(numbers) % 2:
+            raise ValueError("曲线坐标必须成对。")
         pairs = list(zip(numbers[::2], numbers[1::2]))
-    pairs = [(max(0.0, min(255.0, x)), max(0.0, min(255.0, y))) for x, y in pairs]
-    if len(pairs) < 2:
-        return []
+    if not 2 <= len(pairs) <= 16 or any(not (0 <= x <= 255 and 0 <= y <= 255) for x, y in pairs):
+        raise ValueError("曲线需要 2–16 个 0–255 范围内的控制点。")
+    if len({x for x, _ in pairs}) != len(pairs):
+        raise ValueError("曲线控制点的横坐标必须互不相同。")
     return [{"x": x, "y": y} for x, y in pairs]
 
 

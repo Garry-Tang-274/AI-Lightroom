@@ -34,6 +34,8 @@ class WatermarkLibrary:
         source = Path(source)
         if source.suffix.lower() not in SUPPORTED_WATERMARKS:
             raise ValueError("水印仅支持 PNG、JPG 或 WEBP")
+        with Image.open(source) as candidate:
+            candidate.verify()
         asset_id = str(uuid4())
         filename = f"{asset_id}{source.suffix.lower()}"
         shutil.copy2(source, self.directory / filename)
@@ -92,6 +94,9 @@ def composite_watermarks(image: np.ndarray, layers: list[WatermarkLayer], librar
         if overlay is None:
             continue
         if layer.opacity < 1:
+            # Cached overlays are shared across renders and layers. Applying
+            # opacity in-place made a watermark fade away on every preview.
+            overlay = overlay.copy()
             alpha = overlay.getchannel("A").point(lambda value: round(value * layer.opacity))
             overlay.putalpha(alpha)
         result.alpha_composite(overlay, _position(layer, result.size, overlay.size))
@@ -107,7 +112,7 @@ def _load_overlay(path: str, scale: float, target_size: tuple[int, int]) -> Imag
         return None
     longest = max(target_size)
     desired_longest = max(8, round(longest * max(0.01, min(1.0, scale))))
-    ratio = min(1.0, desired_longest / max(overlay.size))
+    ratio = min(desired_longest / max(overlay.size), target_size[0] / overlay.width, target_size[1] / overlay.height)
     size = (max(1, round(overlay.width * ratio)), max(1, round(overlay.height * ratio)))
     return overlay.resize(size, Image.Resampling.LANCZOS)
 

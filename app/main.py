@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import argparse
 import sys
 from pathlib import Path
 
@@ -22,7 +23,7 @@ from app.utils.logging_setup import configure_logging, install_exception_hook
 from app.utils.paths import resource_path
 
 
-__version__ = "1.0.3"
+from app import __version__
 
 
 def package_self_check() -> int:
@@ -50,18 +51,27 @@ def create_application(argv: list[str] | None = None) -> QApplication:
 
 
 def main() -> int:
-    if "--package-self-check" in sys.argv:
+    parser = argparse.ArgumentParser(description="AI Lightroom photo editor")
+    parser.add_argument("photo", nargs="?", help="JPG or PNG to open")
+    parser.add_argument("--package-self-check", action="store_true")
+    parser.add_argument("--smoke-test", nargs="?", const="ai-lightroom-smoke.png")
+    args = parser.parse_args()
+    if args.package_self_check:
         return package_self_check()
     log_path = configure_logging()
     app = create_application()
     install_exception_hook(log_path)
     window = MainWindow()
     window.show()
-    if "--smoke-test" in sys.argv:
-        index = sys.argv.index("--smoke-test")
-        screenshot = sys.argv[index + 1] if index + 1 < len(sys.argv) else "ai-lightroom-smoke.png"
+    if args.photo:
+        QTimer.singleShot(0, lambda: window.open_image_async(args.photo))
+    if args.smoke_test:
+        screenshot = args.smoke_test
 
         def finish_smoke_test() -> None:
+            if window._loading or window._render_in_flight:
+                QTimer.singleShot(100, finish_smoke_test)
+                return
             try:
                 # Exercise the active provider credential backend without exposing a key.
                 window.settings_manager.provider_api_key(window.runtime_settings.provider)

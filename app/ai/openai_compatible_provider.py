@@ -8,7 +8,7 @@ from openai import OpenAI
 from pydantic import ValidationError
 
 from app.ai.capabilities import ProviderCapabilities
-from app.ai.errors import AIRequestError, error_from_exception
+from app.ai.errors import AIRequestError, error_from_exception, safe_validation_errors
 from app.ai.prompt_builder import build_prompt
 from app.ai.provider import AIProvider, PlanningRequest
 from app.ai.schemas import EditingPlan
@@ -72,6 +72,7 @@ class OpenAICompatibleProvider(AIProvider):
         if self.custom_headers:
             client_options["default_headers"] = self.custom_headers
         self.client = client or OpenAI(**client_options)
+        self._api_key = api_key
         self.system_prompt = system_prompt
         self.on_request_started = on_request_started
         self.on_result = on_result
@@ -96,7 +97,7 @@ class OpenAICompatibleProvider(AIProvider):
                 **self._plan_request_options(),
             )
         except Exception as exc:
-            error = error_from_exception(exc, model=self.model, request_sent=True, provider=self.name)
+            error = error_from_exception(exc, model=self.model, request_sent=True, provider=self.name, secrets=(self._api_key,))
             if error.category == "请求超时":
                 error.message = (
                     f"{self.name} 的视觉调色请求在 {self.timeout_seconds:.0f} 秒内未完成。"
@@ -113,14 +114,14 @@ class OpenAICompatibleProvider(AIProvider):
                 "AI EditingPlan validation failed: provider=%s model=%s fields=%s response_shape=%s",
                 self.name,
                 self.model,
-                exc.errors(include_url=False),
+                safe_validation_errors(exc),
                 _safe_json_shape(text),
             )
             raise AIRequestError(
                 category="Pydantic schema 校验错误",
                 message=f"{self.name} 返回 JSON 不符合严格 EditingPlan schema。",
                 provider=self.name, model=self.model, local_exception=type(exc).__name__,
-                validation_errors=exc.errors(include_url=False), request_sent=True,
+                validation_errors=safe_validation_errors(exc), request_sent=True,
             ) from exc
         if self.on_result:
             usage = getattr(response, "usage", None)
@@ -138,13 +139,13 @@ class OpenAICompatibleProvider(AIProvider):
                 **self._request_options(),
             )
         except Exception as exc:
-            raise error_from_exception(exc, model=self.model, request_sent=True, provider=self.name) from exc
+            raise error_from_exception(exc, model=self.model, request_sent=True, provider=self.name, secrets=(self._api_key,)) from exc
         if not _completion_text(response):
             raise AIRequestError(f"{self.name} 返回空内容", "连接测试没有返回文本。", provider=self.name, model=self.model, request_sent=True)
         if self.on_result:
             usage = getattr(response, "usage", None)
             self.on_result("连接测试成功", getattr(usage, "prompt_tokens", None), getattr(usage, "completion_tokens", None), getattr(usage, "total_tokens", None))
-        return "连接成功"
+        return "文字连接测试通过；图片分析与结构化调色需在编辑器中验证。"
 
     def _request_options(self) -> dict[str, object]:
         """Vendor-neutral extension point for compatible API options."""

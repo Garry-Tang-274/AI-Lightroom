@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from app.ai.capabilities import ProviderConfig
-from app.ai.errors import AIRequestError
+from app.ai.errors import AIRequestError, safe_validation_errors
 from app.ai.jarvisart.adapter import JarvisArtAdapter
 from app.ai.jarvisart.runtime import JarvisArtRuntime, LocalJarvisArtRuntime, MockJarvisArtRuntime
 from app.ai.provider import AIProvider, PlanningRequest
@@ -37,7 +37,7 @@ class JarvisArtProvider(AIProvider):
                 "JarvisArt fixture parse failed",
                 "本地 JarvisArt NativePlan 不符合预期的原生输出结构。",
                 provider="JarvisArt Local GGUF", model=self.config.model,
-                validation_errors=exc.errors(include_url=False), request_sent=False,
+                validation_errors=safe_validation_errors(exc), request_sent=False,
             ) from exc
         try:
             result = JarvisArtAdapter().adapt(native)
@@ -46,6 +46,7 @@ class JarvisArtProvider(AIProvider):
                 "JarvisArt adapter unsupported output",
                 "JarvisArt NativePlan 无法安全映射到当前 AI Lightroom EditingPlan。",
                 provider="JarvisArt Local GGUF", model=self.config.model,
+                validation_errors=safe_validation_errors(exc) if isinstance(exc, ValidationError) else None,
                 local_exception=type(exc).__name__, request_sent=False,
             ) from exc
         self.last_unsupported_operations = list(result.unsupported_operations)
@@ -53,7 +54,7 @@ class JarvisArtProvider(AIProvider):
 
     def test_connection(self) -> str:
         status = self.runtime.status
-        if status.state.startswith("Mock"):
+        if status.mode == "mock":
             return f"JarvisArt Local GGUF: {status.state}"
         if status.state != "Ready":
             raise AIRequestError("JarvisArt 服务离线", status.message, provider="JarvisArt Local GGUF", model=self.config.model)

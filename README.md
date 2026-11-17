@@ -16,18 +16,20 @@ AI Lightroom 是一款 Windows 桌面照片编辑器，提供非破坏性的传�
 
 **Start here / 使用入口:** [Windows release](https://github.com/Garry-Tang-274/AI-Lightroom/releases/latest) · [Manual and text-guided workflows / 手动与文字调色](docs/EDITING_WORKFLOWS.md) · [中文指南](docs/GETTING_STARTED_zh-CN.md)
 
-The latest packaged release is v1.0.3. A guide update does not imply a new application release.
+Version **1.1.0 — Workspace & Reliability** adds a clearer editing workspace, faster interactive previews, and fixes for editing, recovery, AI, and export. See [release notes / 发布说明](docs/RELEASE_1_1.md).
 
-当前打包版本为 v1.0.3；说明文档更新不代表软件发布了新版本。
+**1.1.0 — 工作区与稳定性升级**带来更清晰的编辑布局、更快的拖动预览，以及编辑、恢复、AI 和导出修复。详见[发布说明](docs/RELEASE_1_1.md)。
 
 ## Features / 功能
 
-- JPG/PNG import, drag-and-drop, recent files, zoom, fit, 100%, histogram, before/after, undo/redo, and crash-recovery sessions.<br>
-  支持 JPG/PNG 导入、拖入打开、最近文件、缩放、适合窗口、100%、直方图、原图对比、撤回/重做和崩溃恢复会话。
-- Real-time Basic adjustments, HSL, RGB/channel curves, colour grading, masks, brush masks, and non-destructive watermark layers.<br>
-  提供实时基础参数、HSL、RGB/通道曲线、色彩分级、蒙版、画笔蒙版和非破坏性水印图层。
-- Full-resolution JPG/PNG export with available EXIF, ICC, and DPI metadata.<br>
-  以全分辨率导出 JPG/PNG，并尽量保留可用的 EXIF、ICC 与 DPI 元数据。
+- Background JPG/PNG loading, drag-and-drop, recent files, zoom, histogram, draggable before/after comparison, focus mode, and recoverable undo/redo history.<br>
+  支持 JPG/PNG 后台载入、拖入打开、最近文件、缩放、直方图、可拖动的左右对比、专注模式，以及可恢复的撤销/重做历史。
+- Searchable, collapsible adjustment groups: tone, colour, HSL, curves, grading, detail/noise, effects, optics, geometry, and calibration. Separate **调色 / Adjustments** and **AI 助手 / AI Assistant** tabs give each workflow room.<br>
+  参数按明暗、色彩、HSL、曲线、分级、细节/降噪、效果、光学、几何和校准分组，支持折叠与搜索；右侧**调色**和 **AI 助手**分开显示。
+- Editable gradient/range masks, brush masks, and non-destructive watermarks with exact size, opacity, and custom-position controls.<br>
+  渐变/范围蒙版可修改区域参数；支持画笔蒙版和非破坏性水印，可精确设置水印大小、不透明度与自定义位置。
+- Full-resolution JPG/PNG export in the sRGB working colour space, with available EXIF and DPI metadata.<br>
+  以 sRGB 工作色彩空间全分辨率导出 JPG/PNG，并保留可用的 EXIF 与 DPI 元数据。
 - One shared `EditingPlan` and `EditorState` for manual controls and every AI provider.<br>
   手动控件和所有 AI Provider 共用同一套 `EditingPlan` 与 `EditorState`。
 - Provider registry: JarvisArt Local GGUF, Gemini, OpenAI, Qwen/DashScope, DeepSeek text adjustments, Custom OpenAI-compatible API, and Offline Mock.<br>
@@ -49,18 +51,22 @@ For source setup, see [Installation / 安装与源码运行](docs/INSTALLATION.m
 
 1. Open or drag a JPG/PNG into the app.<br>
    打开或拖入一张 JPG/PNG 照片。
-2. Adjust sliders, HSL, curves, masks, or watermarks. Double-click a slider to reset it; enter exact values in its value field.<br>
-   调整滑块、HSL、曲线、蒙版或水印。双击滑块可重置；可在数值框内输入精确值。
-3. Export with `Ctrl+S` or `Ctrl+Shift+S`. Original files are never overwritten by default.<br>
-   使用 `Ctrl+S` 或 `Ctrl+Shift+S` 导出。默认绝不会覆盖原始文件。
-4. Optionally configure an AI provider in **File → Settings** and use `Ctrl+Enter` to send an AI prompt.<br>
-   可在**文件 → 设置**配置 AI Provider，并用 `Ctrl+Enter` 发送 AI 提示词。
+2. Use the right **调色 / Adjustments** tab; search a parameter by Chinese or English name. Double-click a slider to restore its default, or type an exact value. Masks and watermarks are on the left.<br>
+   在右侧**调色**页按中文或英文名称搜索参数。双击滑块恢复默认值，或直接输入精确数值；蒙版和水印在左侧。
+3. Press `C` for a draggable before/after split, then export with `Ctrl+S` or `Ctrl+Shift+S`. Export refuses the source file path and writes a separate full-resolution result.<br>
+   按 `C` 打开可拖动的左右对比，再用 `Ctrl+S` 或 `Ctrl+Shift+S` 导出。导出会拒绝原图路径，另存全分辨率成片。
+4. For AI, configure a provider in **文件 → 设置 / File → Settings**, open the right **AI 助手 / AI Assistant** tab, and send with `Ctrl+Enter`.<br>
+   使用 AI 时，先在**文件 → 设置**配置 Provider，再切换右侧 **AI 助手**页，用 `Ctrl+Enter` 发送。
 
 ## Preview quality / 预览质量
 
 Use the **Low preview / High preview** button in the toolbar, or **File → Settings → Performance & Export**, to choose the working-preview size. High quality rebuilds a larger local preview; when a visual request is needed, the AI receives a JPEG preview using the independently configured AI image-quality setting.
 
 使用工具栏的**低清预览 / 高清预览**按钮，或进入**文件 → 设置 → 性能与导出**选择工作预览尺寸。高清会重建更大的本地预览；需要视觉分析时，AI 会收到按独立“AI 图像质量”设置生成的 JPEG 预览。
+
+While dragging, the editor uses a fast preview capped at 1280 px in the default **Balanced** mode. **Battery** uses 768 px and **Fine interaction** uses 1600 px; choose under **Settings → Performance & Export → Performance mode**. Releasing restores the selected working quality. This temporary interaction size does not lower AI input quality or full-resolution export. The 100% canvas view refers to working-preview pixels.
+
+拖动时临时使用快速预览：默认**平衡**模式最长边为 1280 px，**省电**为 768 px，**精细交互**为 1600 px，可在**设置 → 性能与导出 → 性能模式**选择。松手后恢复所选工作质量；这个交互尺寸不会降低 AI 发送质量或全分辨率导出质量。画布的 100% 指工作预览像素。
 
 - **Automatic / 自动** (default / 默认): cloud providers use low quality to limit transfer and cost; **JarvisArt Local GGUF** uses high quality because it runs locally.<br>
   云端 Provider 使用低清以控制传输量和费用；**JarvisArt Local GGUF** 在本机运行，默认使用高清。
@@ -135,7 +141,11 @@ Choose **Custom / OpenAI-compatible API** in Settings and supply a Provider Name
 | `Ctrl+Z` | Undo / 撤回 |
 | `Ctrl+Y` or `Ctrl+Shift+Z` | Redo / 重做 |
 | `\` or hold **Original** | Before/after / 原图对比 |
+| `C` | Draggable before/after split / 可拖动左右对比 |
+| `Ctrl+Tab` | Toggle focus mode / 切换专注模式 |
 | `F` / `1` | Fit / 100% / 适合窗口 / 100% |
+| `Ctrl+,` | Settings / 设置 |
+| `Ctrl+Alt+C` / `Ctrl+Alt+V` | Copy / paste adjustments / 复制 / 粘贴调整 |
 | Mouse wheel / 鼠标滚轮 | Zoom image; sliders ignore the wheel / 缩放图像；滑块不响应滚轮 |
 | `Ctrl+Enter` | Send AI request / 发送 AI 请求 |
 | `Enter` | New line in AI prompt / 在 AI 提示词中换行 |

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+import json
+from dataclasses import asdict, dataclass
 
 from dotenv import find_dotenv, load_dotenv
 from PySide6.QtCore import QSettings
@@ -49,6 +50,10 @@ class RuntimeSettings:
     @property
     def worker_threads(self) -> int:
         return {"battery": 1, "balanced": 2, "performance": 4}.get(self.performance_mode, 2)
+
+    @property
+    def interaction_preview_size(self) -> int:
+        return {"battery": 768, "balanced": 1280, "performance": 1600}.get(self.performance_mode, 1280)
 
     @property
     def active_model(self) -> str:
@@ -164,6 +169,7 @@ class SettingsManager:
         return self.provider_api_key("openai")
 
     def save(self, settings: RuntimeSettings, api_key: str) -> None:
+        self.save_provider_config(settings.provider_config, api_key)
         self.store.setValue("ai/active_provider", settings.provider)
         self.store.setValue("ai/provider", settings.provider)  # legacy readers
         self.store.setValue("ai/provider_model", settings.active_model)
@@ -187,7 +193,33 @@ class SettingsManager:
         self.store.setValue("export/jpeg_quality", settings.export_jpeg_quality)
         self.store.setValue("performance/mode", settings.performance_mode)
         self.store.sync()
-        descriptor = provider_registry.descriptor(settings.provider)
+
+    def saved_provider_config(self, provider_id: str):
+        if provider_id == self.runtime().provider:
+            return self.runtime().provider_config
+        try:
+            data = json.loads(str(self.store.value(f"ai/providers/{provider_id}/config", "{}")))
+            caps = data.get("capabilities", {})
+            return provider_registry.make_config(
+                provider_id, data.get("model", ""), data.get("base_url", ""), data.get("display_name", ""),
+                custom_vision=caps.get("supports_vision", True),
+                custom_structured_output=caps.get("supports_structured_output", True),
+                local_mode=data.get("local_mode", "real"),
+                custom_organization=data.get("custom_organization", ""), custom_headers=data.get("custom_headers", ""),
+                jarvisart_root=data.get("jarvisart_root", self.store.value("ai/jarvisart_root", "")),
+                jarvisart_endpoint=data.get("jarvisart_endpoint", self.store.value("ai/jarvisart_endpoint", "http://127.0.0.1:8765")),
+                jarvisart_auto_start=data.get("jarvisart_auto_start", True),
+            )
+        except (ValueError, AttributeError, TypeError):
+            return provider_registry.make_config(provider_id)
+
+    def save_provider_config(self, config, api_key: str) -> None:
+        """Keep per-provider connection preferences, with secrets only in the OS vault."""
+        # Validate header safety before anything is persisted.
+        if config.custom_headers:
+            from app.ai.openai_compatible_provider import _parse_headers
+            _parse_headers(config.custom_headers)
+        descriptor = provider_registry.descriptor(config.provider_id)
         if descriptor.requires_api_key and not os.getenv(descriptor.api_key_environment):
             try:
                 store = self._credential_store(descriptor.id)
@@ -197,6 +229,8 @@ class SettingsManager:
                     store.delete()
             except OSError as exc:
                 raise RuntimeError("无法写入 API Key 到系统凭据管理器，请改用 .env 配置。") from exc
+        self.store.setValue(f"ai/providers/{config.provider_id}/config", json.dumps(asdict(config), ensure_ascii=False))
+        self.store.sync()
 
     def _credential_store(self, provider_id: str) -> WindowsCredentialStore:
         if provider_id not in self._credentials:

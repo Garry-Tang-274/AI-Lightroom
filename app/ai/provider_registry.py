@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from urllib.parse import urlsplit
 
 from app.ai.capabilities import ProviderCapabilities, ProviderConfig, ProviderDescriptor
 from app.ai.gemini_provider import GeminiProvider
@@ -60,11 +61,19 @@ class ProviderRegistry:
         )
 
     def create(self, config: ProviderConfig, api_key: str, *, system_prompt: str = DEFAULT_SYSTEM_PROMPT, on_request_started=None, on_result=None, client=None):
+        if config.provider_id not in self._factories:
+            raise ValueError(f"未知 AI Provider：{config.provider_id}，请在设置中重新选择。")
         descriptor = self.descriptor(config.provider_id)
+        if not config.model.strip():
+            raise ValueError(f"{descriptor.display_name} Model ID 为空")
         if descriptor.requires_api_key and not api_key:
             raise ValueError(f"{descriptor.display_name} API Key 为空")
         if descriptor.capabilities.supports_custom_base_url and not config.base_url and descriptor.requires_api_key:
             raise ValueError(f"{descriptor.display_name} Base URL 为空")
+        if descriptor.capabilities.supports_custom_base_url and config.base_url:
+            endpoint = urlsplit(config.base_url)
+            if endpoint.scheme not in {"http", "https"} or not endpoint.hostname:
+                raise ValueError(f"{descriptor.display_name} Base URL 必须是有效的 HTTP/HTTPS 地址")
         return self._factories[descriptor.id](
             config, api_key, system_prompt=system_prompt,
             on_request_started=on_request_started, on_result=on_result, client=client,

@@ -33,9 +33,15 @@ def render_image(source: np.ndarray, state: EditorState) -> np.ndarray:
     """Render an RGB uint8 source deterministically from a complete edit state."""
     if source.dtype != np.uint8 or source.ndim != 3 or source.shape[2] != 3:
         raise ValueError("source must be an RGB uint8 image")
+    if not source.shape[0] or not source.shape[1]:
+        raise ValueError("source must not be empty")
+    if state.is_pristine():
+        return source.copy()
 
-    image = source.astype(np.float32) / 255.0
-    image = _transform_geometry(image, state.transform)
+    # Mask positions are normalized in the current, geometrically transformed
+    # canvas. Analyze that same ungraded canvas for both masks and overlays.
+    mask_source = prepare_mask_source(source, state)
+    image = mask_source.astype(np.float32) / 255.0
     image = _calibrate_primaries(image, state)
     basic = state.basic
     image = _white_balance(image, basic.temperature, basic.tint)
@@ -64,13 +70,25 @@ def render_image(source: np.ndarray, state: EditorState) -> np.ndarray:
     for layer in state.masks:
         if not layer.enabled or layer.opacity <= 0:
             continue
-        mask = generate_mask(source, layer)[..., None]
+        if not any(layer.adjustments.model_dump().values()):
+            continue
+        mask = generate_mask(mask_source, layer)[..., None]
         if not np.any(mask):
             continue
         adjusted = _apply_local_adjustments(image, layer.adjustments)
         image = image * (1.0 - mask) + adjusted * mask
     rendered = np.clip(np.rint(image * 255.0), 0, 255).astype(np.uint8)
     return composite_watermarks(rendered, state.watermarks)
+
+
+def prepare_mask_source(source: np.ndarray, state: EditorState) -> np.ndarray:
+    """Return the ungraded canvas used by mask analysis and UI overlays.
+
+    Geometric controls change the canvas before masks; brush/gradient
+    coordinates therefore match the visible photograph, including after a
+    rotation or perspective correction. The original source is never edited.
+    """
+    return _transform_geometry(source, state.transform)
 
 
 def _apply_local_adjustments(image: np.ndarray, local: LocalAdjustments) -> np.ndarray:
@@ -121,8 +139,29 @@ def _white_balance(image: np.ndarray, temperature: float, tint: float) -> np.nda
 def _exposure(image: np.ndarray, exposure: float) -> np.ndarray:
     if exposure == 0:
         return image
-    linear = _srgb_to_linear(image)
-    return _linear_to_srgb(linear * (2.0**exposure))
+    factor = 2.0**exposure
+    # In the power-law region, sRGB decode -> multiply -> encode simplifies
+    # exactly to an affine expression. Evaluate powers only for dark pixels
+    # crossing the linear toe, rather than twice over the entire photograph.
+    output = (image + 0.055) * factor ** (1.0 / 2.4) - 0.055
+    if factor >= 1.0:
+        toe = image <= 0.04045
+        values = image[toe] * factor
+        output[toe] = np.where(
+            values <= 0.0031308 * 12.92,
+            values,
+            1.055 * (values / 12.92) ** (1.0 / 2.4) - 0.055,
+        )
+    else:
+        threshold = 1.055 * (0.0031308 / factor) ** (1.0 / 2.4) - 0.055
+        toe = image <= threshold
+        values = image[toe]
+        output[toe] = np.where(
+            values <= 0.04045,
+            values * factor,
+            ((values + 0.055) / 1.055) ** 2.4 * factor * 12.92,
+        )
+    return np.clip(output, 0.0, 1.0)
 
 
 def _tone(
@@ -133,6 +172,8 @@ def _tone(
     whites: float,
     blacks: float,
 ) -> np.ndarray:
+    if not any((contrast, highlights, shadows, whites, blacks)):
+        return image
     if contrast:
         strength = contrast / 100.0
         slope = 2.0 ** (strength * 1.35)
@@ -177,14 +218,14 @@ def _saturation(image: np.ndarray, saturation: float, vibrance: float) -> np.nda
     hsv = cv2.cvtColor(np.clip(image, 0, 1), cv2.COLOR_RGB2HSV)
     current = hsv[..., 1]
     if saturation:
-        if saturation >= 0:
-            current += (1.0 - current) * (saturation / 100.0)
-        else:
-            current *= 1.0 + saturation / 100.0
+        # HSV assigns an arbitrary hue (red) to gray pixels. Increasing
+        # saturation must strengthen existing chroma, not invent red chroma.
+        current *= 1.0 + saturation / 100.0
+        current = np.clip(current, 0.0, 1.0)
     if vibrance:
         selective = (1.0 - current) ** 1.5
         if vibrance >= 0:
-            current += (1.0 - current) * selective * (vibrance / 100.0) * 0.85
+            current += current * (1.0 - current) * selective * (vibrance / 100.0) * 1.7
         else:
             current *= 1.0 + (vibrance / 100.0) * selective * 0.75
     hsv[..., 1] = np.clip(current, 0.0, 1.0)
@@ -196,12 +237,14 @@ def _hsl(image: np.ndarray, state: EditorState) -> np.ndarray:
         return image
     hsv = cv2.cvtColor(np.clip(image, 0, 1), cv2.COLOR_RGB2HSV)
     hue_original = hsv[..., 0].copy()
-    sat_original = hsv[..., 1].copy()
+    chroma_weight = _smoothstep(0.01, 0.12, hsv[..., 1])
     for color, adjustment in state.hsl.items():
+        if adjustment.hue == adjustment.saturation == adjustment.luminance == 0:
+            continue
         center = _HSL_CENTERS[color]
         distance = np.abs((hue_original - center + 180.0) % 360.0 - 180.0)
         weight = np.clip(1.0 - distance / 48.0, 0.0, 1.0)
-        weight = weight * weight * (3.0 - 2.0 * weight)
+        weight = weight * weight * (3.0 - 2.0 * weight) * chroma_weight
         if adjustment.hue:
             hsv[..., 0] = (hsv[..., 0] + weight * adjustment.hue * 0.35) % 360.0
         if adjustment.saturation:
@@ -223,8 +266,11 @@ def _color_grading(image: np.ndarray, state: EditorState) -> np.ndarray:
         return image
     luma = _luminance(image)
     balance = grading.balance / 500.0
-    shadow_weight = 1.0 - _smoothstep(0.12 + balance, 0.55 + balance, luma)
-    highlight_weight = _smoothstep(0.45 + balance, 0.88 + balance, luma)
+    # At the default 50 the original transition is retained. Lower blending
+    # separates tonal ranges; higher blending lets the wheels overlap more.
+    half_width = 0.215 * (0.5 + grading.blending / 100.0)
+    shadow_weight = 1.0 - _smoothstep(0.335 + balance - half_width, 0.335 + balance + half_width, luma)
+    highlight_weight = _smoothstep(0.665 + balance - half_width, 0.665 + balance + half_width, luma)
     mid_weight = np.clip(1.0 - shadow_weight - highlight_weight, 0.0, 1.0)
     output = image.copy()
     for wheel, weight in (
@@ -260,6 +306,8 @@ def _curve_is_identity(curve: ToneCurve) -> bool:
 
 
 def _local_contrast(image: np.ndarray, clarity: float, texture: float, dehaze: float) -> np.ndarray:
+    if not any((clarity, texture, dehaze)):
+        return image
     output = image
     if texture:
         fine = cv2.GaussianBlur(output, (0, 0), 1.0)
@@ -270,7 +318,9 @@ def _local_contrast(image: np.ndarray, clarity: float, texture: float, dehaze: f
         base = cv2.GaussianBlur(luma, (0, 0), radius)
         detail = (luma - base) * (clarity / 100.0) * 0.9
         weight = 1.0 - np.abs(luma - 0.5) * 1.4
-        output += (detail * np.clip(weight, 0.0, 1.0))[..., None]
+        # A local adjustment may receive the shared, unmodified image. Never
+        # mutate it before the mask has been applied.
+        output = output + (detail * np.clip(weight, 0.0, 1.0))[..., None]
     if dehaze:
         amount = dehaze / 100.0
         luma = _luminance(np.clip(output, 0, 1))
@@ -302,7 +352,8 @@ def _vignette(image: np.ndarray, vignette: float, effects: EffectsAdjustments | 
         return image
     settings = effects or EffectsAdjustments()
     height, width = image.shape[:2]
-    y, x = np.ogrid[-1.0:1.0:complex(height), -1.0:1.0:complex(width)]
+    y = np.linspace(-1.0, 1.0, height, dtype=np.float32)[:, None]
+    x = np.linspace(-1.0, 1.0, width, dtype=np.float32)[None, :]
     aspect = width / max(height, 1)
     roundness = settings.vignette_roundness / 100.0
     x_scale = 1.0 + roundness * 0.35
@@ -332,18 +383,17 @@ def _vignette(image: np.ndarray, vignette: float, effects: EffectsAdjustments | 
 def _reduce_noise(image: np.ndarray, settings: DetailAdjustments) -> np.ndarray:
     if settings.luminance_noise_reduction <= 0 and settings.color_noise_reduction <= 0:
         return image
-    output = image.copy()
+    lab = cv2.cvtColor(np.clip(image, 0, 1), cv2.COLOR_RGB2LAB)
     if settings.color_noise_reduction > 0:
-        lab = cv2.cvtColor(np.clip(output, 0, 1), cv2.COLOR_RGB2LAB)
         sigma = 0.5 + settings.color_noise_reduction / 100.0 * 2.0
         blurred_a = cv2.GaussianBlur(lab[..., 1], (0, 0), sigma)
         blurred_b = cv2.GaussianBlur(lab[..., 2], (0, 0), sigma)
         strength = settings.color_noise_reduction / 100.0 * (0.45 + settings.color_noise_reduction_smoothness / 200.0)
+        color_detail = np.hypot(lab[..., 1] - blurred_a, lab[..., 2] - blurred_b)
+        strength = strength * (1.0 - _smoothstep(2.0, 12.0, color_detail) * settings.color_noise_reduction_detail / 100.0)
         lab[..., 1] = lab[..., 1] * (1.0 - strength) + blurred_a * strength
         lab[..., 2] = lab[..., 2] * (1.0 - strength) + blurred_b * strength
-        output = cv2.cvtColor(lab, cv2.COLOR_LAB2RGB)
     if settings.luminance_noise_reduction > 0:
-        lab = cv2.cvtColor(np.clip(output, 0, 1), cv2.COLOR_RGB2LAB)
         sigma = 0.5 + settings.luminance_noise_reduction / 100.0 * 2.8
         base = cv2.GaussianBlur(lab[..., 0], (0, 0), sigma)
         strength = settings.luminance_noise_reduction / 100.0 * (0.35 + (100.0 - settings.luminance_noise_reduction_detail) / 220.0)
@@ -351,8 +401,7 @@ def _reduce_noise(image: np.ndarray, settings: DetailAdjustments) -> np.ndarray:
         luma = lab[..., 0]
         smoothed = luma * (1.0 - strength) + base * strength
         lab[..., 0] = smoothed + (luma - base) * detail_keep
-        output = cv2.cvtColor(lab, cv2.COLOR_LAB2RGB)
-    return np.clip(output, 0.0, 1.0)
+    return np.clip(cv2.cvtColor(lab, cv2.COLOR_LAB2RGB), 0.0, 1.0)
 
 
 def _grain(image: np.ndarray, effects: EffectsAdjustments) -> np.ndarray:
@@ -380,24 +429,30 @@ def _defringe(image: np.ndarray, optics: OpticsAdjustments) -> np.ndarray:
         return image
     hsv = cv2.cvtColor(np.clip(image, 0, 1), cv2.COLOR_RGB2HSV)
 
-    def desaturate_range(amount: float, low: float, high: float) -> None:
+    brightness = hsv[..., 2]
+    edge = np.abs(brightness - cv2.GaussianBlur(brightness, (0, 0), 1.0))
+    edge_weight = _smoothstep(0.008, 0.080, edge)
+
+    def desaturate_range(amount: float, low_hue: float, high_hue: float) -> None:
         if amount <= 0:
             return
-        low_hue = low * 3.6
-        high_hue = high * 3.6
         hue = hsv[..., 0]
         if low_hue <= high_hue:
             hue_mask = (hue >= low_hue) & (hue <= high_hue)
         else:
             hue_mask = (hue >= low_hue) | (hue <= high_hue)
-        brightness = hsv[..., 2]
-        edge = np.abs(brightness - cv2.GaussianBlur(brightness, (0, 0), 1.0))
-        edge_weight = _smoothstep(0.008, 0.080, edge)
         factor = 1.0 - amount / 100.0 * (0.65 if optics.remove_chromatic_aberration else 0.45)
         hsv[..., 1][hue_mask] *= 1.0 - (1.0 - factor) * edge_weight[hue_mask]
 
-    desaturate_range(optics.defringe_purple_amount, optics.defringe_purple_hue_low, optics.defringe_purple_hue_high)
-    desaturate_range(optics.defringe_green_amount, optics.defringe_green_hue_low, optics.defringe_green_hue_high)
+    # The controls are normalized ranges *within* purple / green, not whole
+    # hue-wheel degrees. Automatic CA is a conservative edge-fringe reduction.
+    auto_amount = 25.0 if optics.remove_chromatic_aberration else 0.0
+    desaturate_range(max(auto_amount, optics.defringe_purple_amount),
+                     (240 + optics.defringe_purple_hue_low * 1.2) % 360,
+                     (240 + optics.defringe_purple_hue_high * 1.2) % 360)
+    desaturate_range(max(auto_amount, optics.defringe_green_amount),
+                     40 + optics.defringe_green_hue_low * 1.2,
+                     40 + optics.defringe_green_hue_high * 1.2)
     return cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB)
 
 
@@ -413,14 +468,16 @@ def _transform_geometry(image: np.ndarray, transform: TransformSettings) -> np.n
         [width - 1 + horizontal, height - 1 + vertical], [-horizontal, height - 1 - vertical],
     ])
     matrix = cv2.getPerspectiveTransform(src, dst)
-    output = cv2.warpPerspective(image, matrix, (width, height), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
-    center = (width / 2.0, height / 2.0)
+    center = ((width - 1) / 2.0, (height - 1) / 2.0)
     rotation = cv2.getRotationMatrix2D(center, transform.rotate, transform.scale / 100.0)
     rotation[0, 0] *= 1.0 + transform.aspect / 100.0 * 0.18
     rotation[0, 1] *= 1.0 + transform.aspect / 100.0 * 0.18
+    rotation[0, 2] = center[0] - rotation[0, 0] * center[0] - rotation[0, 1] * center[1]
     rotation[0, 2] += transform.offset_x / 100.0 * width * 0.20
     rotation[1, 2] += transform.offset_y / 100.0 * height * 0.20
-    return cv2.warpAffine(output, rotation, (width, height), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+    # Compose the transforms, so detail is resampled once rather than twice.
+    combined = np.vstack((rotation, [0.0, 0.0, 1.0])) @ matrix
+    return cv2.warpPerspective(image, combined, (width, height), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
 
 
 def _calibrate_primaries(image: np.ndarray, state: EditorState) -> np.ndarray:
@@ -428,6 +485,7 @@ def _calibrate_primaries(image: np.ndarray, state: EditorState) -> np.ndarray:
     if calibration == type(calibration)():
         return image
     hsv = cv2.cvtColor(np.clip(image, 0, 1), cv2.COLOR_RGB2HSV)
+    chroma_weight = _smoothstep(0.01, 0.12, hsv[..., 1])
     for center, hue_adjustment, saturation_adjustment in (
         (0.0, calibration.red_primary_hue, calibration.red_primary_saturation),
         (120.0, calibration.green_primary_hue, calibration.green_primary_saturation),
@@ -435,7 +493,7 @@ def _calibrate_primaries(image: np.ndarray, state: EditorState) -> np.ndarray:
     ):
         distance = np.abs((hsv[..., 0] - center + 180.0) % 360.0 - 180.0)
         weight = np.clip(1.0 - distance / 70.0, 0.0, 1.0)
-        weight = weight * weight * (3.0 - 2.0 * weight)
+        weight = weight * weight * (3.0 - 2.0 * weight) * chroma_weight
         hsv[..., 0] = (hsv[..., 0] + weight * hue_adjustment * 0.22) % 360.0
         if saturation_adjustment:
             current = hsv[..., 1]

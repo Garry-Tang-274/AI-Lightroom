@@ -74,6 +74,30 @@ GlobalTool = Literal[
     "set_color_grade_balance",
 ]
 
+# One contract for local validation and the model's instructions.
+GLOBAL_ADJUSTMENT_RANGES = {tool: (-100.0, 100.0) for tool in GlobalTool.__args__}
+GLOBAL_ADJUSTMENT_RANGES.update({
+    tool: (0.0, 100.0) for tool in (
+        "set_sharpen", "set_sharpen_detail", "set_sharpen_masking",
+        "set_luminance_noise_reduction", "set_luminance_noise_reduction_detail",
+        "set_luminance_noise_reduction_contrast", "set_color_noise_reduction",
+        "set_color_noise_reduction_detail", "set_color_noise_reduction_smoothness",
+        "set_vignette_midpoint", "set_vignette_feather", "set_vignette_highlights",
+        "set_grain_amount", "set_grain_size", "set_grain_roughness",
+        "set_defringe_purple_amount", "set_defringe_purple_hue_low", "set_defringe_purple_hue_high",
+        "set_defringe_green_amount", "set_defringe_green_hue_low", "set_defringe_green_hue_high",
+        "set_color_grade_shadow_saturation", "set_color_grade_midtone_saturation",
+        "set_color_grade_highlight_saturation", "set_color_grade_blending",
+    )
+})
+GLOBAL_ADJUSTMENT_RANGES.update({
+    "set_exposure": (-5.0, 5.0), "set_sharpen_radius": (0.3, 3.0),
+    "set_transform_scale": (50.0, 150.0), "set_transform_rotate": (-45.0, 45.0),
+    "set_vignette_style": (0.0, 3.0), "set_remove_chromatic_aberration": (0.0, 1.0),
+    "set_color_grade_shadow_hue": (0.0, 360.0), "set_color_grade_midtone_hue": (0.0, 360.0),
+    "set_color_grade_highlight_hue": (0.0, 360.0),
+})
+
 CurveTool = Literal["set_rgb_curve", "set_red_curve", "set_green_curve", "set_blue_curve"]
 
 MaskTool = Literal[
@@ -97,38 +121,11 @@ class GlobalAdjustment(StrictModel):
 
     @model_validator(mode="after")
     def validate_value(self) -> "GlobalAdjustment":
-        if self.tool == "set_exposure" and not -5 <= self.value <= 5:
-            raise ValueError("exposure must be between -5 and 5")
-        if self.tool == "set_sharpen_radius" and not 0.3 <= self.value <= 3:
-            raise ValueError("sharpen radius must be between 0.3 and 3")
-        if self.tool == "set_transform_scale" and not 50 <= self.value <= 150:
-            raise ValueError("transform scale must be between 50 and 150")
-        if self.tool == "set_transform_rotate" and not -45 <= self.value <= 45:
-            raise ValueError("transform rotate must be between -45 and 45")
-        if self.tool == "set_vignette_style" and not 0 <= self.value <= 3:
-            raise ValueError("vignette style must be between 0 and 3")
-        non_negative = {
-            "set_sharpen", "set_sharpen_detail", "set_sharpen_masking",
-            "set_luminance_noise_reduction", "set_luminance_noise_reduction_detail",
-            "set_luminance_noise_reduction_contrast", "set_color_noise_reduction",
-            "set_color_noise_reduction_detail", "set_color_noise_reduction_smoothness",
-            "set_vignette_midpoint", "set_vignette_feather", "set_vignette_highlights",
-            "set_grain_amount", "set_grain_size", "set_grain_roughness",
-            "set_remove_chromatic_aberration", "set_defringe_purple_amount",
-            "set_defringe_purple_hue_low", "set_defringe_purple_hue_high",
-            "set_defringe_green_amount", "set_defringe_green_hue_low", "set_defringe_green_hue_high",
-            "set_color_grade_shadow_saturation", "set_color_grade_midtone_saturation",
-            "set_color_grade_highlight_saturation", "set_color_grade_blending",
-        }
-        hue_values = {
-            "set_color_grade_shadow_hue", "set_color_grade_midtone_hue", "set_color_grade_highlight_hue",
-        }
-        if self.tool in non_negative and not 0 <= self.value <= 100:
-            raise ValueError(f"{self.tool} must be between 0 and 100")
-        if self.tool in hue_values and not 0 <= self.value <= 360:
-            raise ValueError(f"{self.tool} must be between 0 and 360")
-        if self.tool not in {"set_exposure", "set_sharpen_radius", "set_transform_scale", "set_transform_rotate", "set_vignette_style", *non_negative, *hue_values} and not -100 <= self.value <= 100:
-            raise ValueError(f"{self.tool} must be between -100 and 100")
+        minimum, maximum = GLOBAL_ADJUSTMENT_RANGES[self.tool]
+        if not minimum <= self.value <= maximum:
+            raise ValueError(f"{self.tool} must be between {minimum:g} and {maximum:g}")
+        if self.tool in {"set_remove_chromatic_aberration", "set_vignette_style"} and not self.value.is_integer():
+            raise ValueError(f"{self.tool} must be an integer")
         return self
 
 
@@ -209,6 +206,7 @@ class EditingPlan(StrictModel):
 
 AVAILABLE_TOOLS = {
     "global": list(GlobalTool.__args__),
+    "global_value_ranges": GLOBAL_ADJUSTMENT_RANGES,
     "hsl": ["adjust_hsl"],
     "curves": list(CurveTool.__args__),
     "masks": list(MaskTool.__args__),
@@ -243,8 +241,9 @@ requestedMasks, tools, plan, or any other extra key.
 
 global_adjustments item: {\"tool\": \"set_exposure\", \"value\": 0.0}.
 Only use a global tool listed in available_tools.global. Values are target
-absolute values; exposure is -5..5, sharpen is 0..100, all other global
-values are -100..100.
+absolute values. Follow available_tools.global_value_ranges for each tool:
+exposure is -5..5, colour-grading hue is 0..360, transform scale is 50..150.
+set_remove_chromatic_aberration is 0 or 1; set_vignette_style is an integer 0..3.
 hsl_adjustments item: {\"tool\": \"adjust_hsl\", \"color\": \"blue\",
 \"hue\": 0.0, \"saturation\": 0.0, \"luminance\": 0.0}. Color is one of
 red, orange, yellow, green, aqua, blue, purple, magenta; HSL values are -100..100.

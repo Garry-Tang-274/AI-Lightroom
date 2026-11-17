@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 from pathlib import Path
+import logging
 import platform
 import subprocess
+import time
 
 from PySide6.QtCore import QSettings, QThreadPool, QTimer, Qt, QUrl
 from PySide6.QtGui import QAction, QActionGroup, QKeySequence, QDesktopServices
 from PySide6.QtWidgets import (
     QFileDialog,
+    QHBoxLayout,
     QInputDialog,
     QLabel,
     QListWidget,
@@ -18,6 +21,7 @@ from PySide6.QtWidgets import (
     QTabWidget,
     QToolBar,
     QToolButton,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -28,6 +32,8 @@ from app.ui.ai_worker import AIEditWorker
 from app.ui.image_view import ImageView
 from app.ui.mask_panel import MaskPanel
 from app.ui.render_worker import PreviewRenderWorker
+from app.ui.load_worker import ImageLoadWorker
+from app.ui.jarvisart_worker import JarvisArtControlWorker
 from app.ui.settings_dialog import SettingsDialog
 from app.ui.usage_dialog import AIUsageDialog
 from app.ui.watermark_panel import WatermarkPanel
@@ -53,10 +59,11 @@ from app.ai.provider_registry import provider_registry
 from app.core.watermarks import WatermarkLibrary
 from app.core.session_store import SessionStore
 from app.core.masks import generate_mask, mask_confidence
+from app.core.image_processor import prepare_mask_source
 from app.utils.logging_setup import configure_logging
 
 
-APP_VERSION = "1.0.3"
+from app import __version__ as APP_VERSION
 
 
 class MainWindow(QMainWindow):
@@ -64,7 +71,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("AI Lightroom")
         self.resize(1480, 920)
-        self.setMinimumSize(1050, 680)
+        self.setMinimumSize(1080, 700)
         self.setAcceptDrops(True)
         self.settings_manager = SettingsManager()
         self.runtime_settings = self.settings_manager.runtime()
@@ -78,8 +85,21 @@ class MainWindow(QMainWindow):
         self.preview_source = None
         self.current_preview = None
         self._render_generation = 0
+        self._document_generation = 0
+        self._load_generation = 0
+        self._loading = False
+        self._closing = False
+        self._close_when_idle = False
+        self._ai_before_state = None
+        self._ai_document = None
+        self._provider_health_worker = None
+        self._provider_health = "正在检查服务…"
+        self._interactive_source = None
+        self._render_started_at = 0.0
         self._render_pool = QThreadPool(self)
-        self._render_pool.setMaxThreadCount(self.runtime_settings.worker_threads)
+        self._render_pool.setMaxThreadCount(1)
+        self._task_pool = QThreadPool(self)
+        self._task_pool.setMaxThreadCount(2)
         self._render_timer = QTimer(self)
         self._render_timer.setSingleShot(True)
         self._render_timer.setInterval(16)
@@ -104,10 +124,12 @@ class MainWindow(QMainWindow):
         self._build_menu()
         self._build_toolbar()
         self._build_workspace()
+        self._restore_workspace_layout()
         self.statusBar().showMessage("就绪 — 打开 JPG 或 PNG 开始编辑")
         self.adjustments.set_enabled_for_image(False)
         self.ai_panel.set_ready(False)
         self._refresh_ai_status()
+        self._sync_actions()
 
     def _build_actions(self) -> None:
         self.open_action = QAction("打开图片…", self)
@@ -136,16 +158,26 @@ class MainWindow(QMainWindow):
         self.undo_action.triggered.connect(self.undo)
         self.redo_action = QAction("重做", self)
         self.redo_action.setShortcut(QKeySequence.StandardKey.Redo)
+        self.redo_action.setShortcuts([QKeySequence("Ctrl+Y"), QKeySequence("Ctrl+Shift+Z")])
         self.redo_action.setEnabled(False)
         self.redo_action.triggered.connect(self.redo)
         self.reset_action = QAction("重置所有调整", self)
         self.reset_action.setShortcut(QKeySequence("Ctrl+R"))
         self.reset_action.triggered.connect(self.reset_edits)
         self.settings_action = QAction("设置…", self)
+        self.settings_action.setShortcut(QKeySequence("Ctrl+,"))
         self.settings_action.triggered.connect(self.open_settings)
         self.before_action = QAction("原图对比", self)
         self.before_action.setShortcut(QKeySequence("\\"))
         self.before_action.triggered.connect(self._toggle_before_after)
+        self.split_action = QAction("左右对比", self)
+        self.split_action.setCheckable(True)
+        self.split_action.setShortcut(QKeySequence("C"))
+        self.split_action.toggled.connect(self._toggle_split_comparison)
+        self.focus_action = QAction("专注模式", self)
+        self.focus_action.setCheckable(True)
+        self.focus_action.setShortcut(QKeySequence("Ctrl+Tab"))
+        self.focus_action.toggled.connect(self._toggle_focus_mode)
         self.copy_adjustments_action = QAction("复制调整", self)
         self.copy_adjustments_action.setShortcut(QKeySequence("Ctrl+Alt+C"))
         self.copy_adjustments_action.triggered.connect(self.copy_adjustments)
@@ -192,6 +224,8 @@ class MainWindow(QMainWindow):
         view_menu.addAction(self.fit_action)
         view_menu.addAction(self.actual_action)
         view_menu.addAction(self.before_action)
+        view_menu.addAction(self.split_action)
+        view_menu.addAction(self.focus_action)
         view_menu.addSeparator()
         view_menu.addMenu(self.preview_quality_menu)
         help_menu = self.menuBar().addMenu("帮助")
@@ -224,6 +258,12 @@ class MainWindow(QMainWindow):
         self.before_button.pressed.connect(self._show_before)
         self.before_button.released.connect(self._show_after)
         toolbar.addWidget(self.before_button)
+        toolbar.addAction(self.split_action)
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        toolbar.addWidget(spacer)
+        toolbar.addAction(self.settings_action)
+        toolbar.widgetForAction(self.export_action).setObjectName("accentButton")
         self.addToolBar(toolbar)
         self._update_preview_quality_actions()
 
@@ -237,6 +277,8 @@ class MainWindow(QMainWindow):
         self.ai_panel.cancel_requested.connect(self._cancel_ai_request)
         self.ai_panel.usage_requested.connect(self._show_ai_usage)
         self.ai_panel.retry_requested.connect(self._retry_ai_request)
+        self.ai_panel.settings_requested.connect(self.open_settings)
+        self.image_view.open_requested.connect(self.open_image_dialog)
         self.adjustments.adjustment_changed.connect(self._set_basic_adjustment)
         self.adjustments.hsl_changed.connect(self._set_hsl_adjustment)
         self.adjustments.curve_changed.connect(self._set_curve)
@@ -247,6 +289,9 @@ class MainWindow(QMainWindow):
         self.adjustments.interaction_finished.connect(self._finish_interaction)
 
         left_tabs = QTabWidget()
+        self.left_tabs = left_tabs
+        left_tabs.setMinimumWidth(245)
+        left_tabs.setMaximumWidth(420)
         history = QListWidget()
         history.addItem("打开图片后显示历史记录")
         masks = MaskPanel()
@@ -275,24 +320,130 @@ class MainWindow(QMainWindow):
         self.watermark_panel.library_delete_requested.connect(self._delete_watermark_asset)
         self.watermark_panel.library_default_requested.connect(self._set_default_watermark)
         self.watermark_panel.default_add_requested.connect(self._add_default_watermark)
+        self.watermark_panel.interaction_started.connect(self._begin_interaction)
+        self.watermark_panel.interaction_finished.connect(self._finish_interaction)
 
         right = QWidget()
+        self.right_panel = right
+        right.setMinimumWidth(330)
+        right.setMaximumWidth(560)
         right_layout = QVBoxLayout(right)
         right_layout.setContentsMargins(0, 0, 0, 0)
-        vertical = QSplitter(Qt.Orientation.Vertical)
-        vertical.addWidget(self.adjustments)
-        vertical.addWidget(self.histogram)
-        vertical.addWidget(self.ai_panel)
-        vertical.setSizes([500, 150, 270])
-        right_layout.addWidget(vertical)
+        right_layout.setSpacing(0)
+        self.histogram.setFixedHeight(132)
+        right_layout.addWidget(self.histogram)
+        self.editor_tabs = QTabWidget()
+        self.editor_tabs.addTab(self.adjustments, "调色")
+        self.editor_tabs.addTab(self.ai_panel, "AI 助手")
+        right_layout.addWidget(self.editor_tabs, 1)
+
+        canvas = QWidget()
+        canvas_layout = QVBoxLayout(canvas)
+        canvas_layout.setContentsMargins(0, 0, 0, 0)
+        canvas_layout.setSpacing(0)
+        canvas_header = QWidget()
+        canvas_header.setObjectName("canvasHeader")
+        header_layout = QHBoxLayout(canvas_header)
+        header_layout.setContentsMargins(0, 0, 8, 0)
+        self.photo_label = QLabel("照片工作区")
+        self.photo_label.setObjectName("canvasInfo")
+        self.photo_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.zoom_label = QLabel("适合窗口")
+        self.zoom_label.setObjectName("muted")
+        self.zoom_label.setToolTip("百分比相对工作预览；导出始终为原始尺寸。")
+        self.image_view.zoom_changed.connect(lambda zoom: self.zoom_label.setText(f"{zoom:.0%} · 预览"))
+        header_layout.addWidget(self.photo_label, 1)
+        header_layout.addWidget(self.zoom_label)
+        canvas_layout.addWidget(canvas_header)
+        canvas_layout.addWidget(self.image_view, 1)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.workspace_splitter = splitter
+        splitter.setHandleWidth(4)
+        splitter.setChildrenCollapsible(False)
         splitter.addWidget(left_tabs)
-        splitter.addWidget(self.image_view)
+        splitter.addWidget(canvas)
         splitter.addWidget(right)
-        splitter.setSizes([210, 900, 360])
+        splitter.setSizes([245, 860, 370])
         splitter.setStretchFactor(1, 1)
         self.setCentralWidget(splitter)
+        self.render_label = QLabel("")
+        self.render_label.setObjectName("muted")
+        self.statusBar().addPermanentWidget(self.render_label)
+
+    def _restore_workspace_layout(self) -> None:
+        geometry = self.settings.value("workspace/geometry")
+        if geometry is not None:
+            self.restoreGeometry(geometry)
+        sizes = self.settings.value("workspace/sizes")
+        if isinstance(sizes, list) and len(sizes) == 3:
+            self.workspace_splitter.setSizes([max(100, int(v)) for v in sizes])
+
+    def _toggle_focus_mode(self, enabled: bool) -> None:
+        self.left_tabs.setVisible(not enabled)
+        self.right_panel.setVisible(not enabled)
+
+    def _toggle_split_comparison(self, enabled: bool) -> None:
+        self._show_after()
+        self.image_view.set_comparison(self.preview_source, enabled)
+        if enabled:
+            self.image_view.set_mask_overlay(None)
+            self.statusBar().showMessage("左右对比：左侧原图，右侧调整后；在画布上拖动分隔线。", 7000)
+        else:
+            self._update_mask_overlay()
+
+    def _sync_actions(self) -> None:
+        ready = self.loaded_image is not None
+        editable = ready and self._ai_worker is None and not self._loading
+        self.adjustments.setEnabled(editable)
+        self.adjustments.set_enabled_for_image(editable)
+        self.mask_panel.setEnabled(editable)
+        self.image_view.set_editing_enabled(editable)
+        self.watermark_panel.setEnabled(editable)
+        self.history_list.setEnabled(editable)
+        self.open_action.setEnabled(self._ai_worker is None)
+        self.settings_action.setEnabled(self._ai_worker is None and not self._loading)
+        for action in (self.reset_action, self.copy_adjustments_action):
+            action.setEnabled(editable)
+        self.paste_adjustments_action.setEnabled(editable and bool(self._adjustment_clipboard))
+        self.undo_action.setEnabled(editable and self.history.can_undo)
+        self.redo_action.setEnabled(editable and self.history.can_redo)
+        for action in (self.export_action, self.export_as_action):
+            action.setEnabled(editable and self._export_worker is None)
+        for action in (self.fit_action, self.actual_action, self.before_action, self.split_action):
+            action.setEnabled(ready)
+        self.before_button.setEnabled(ready)
+        self.ai_panel.set_ready(ready and not self._loading)
+
+    def open_image_async(self, filename: str) -> None:
+        if self._ai_worker is not None:
+            self.statusBar().showMessage("请先等待 AI 完成，或取消当前请求。", 5000)
+            return
+        self._load_generation += 1
+        self._loading = True
+        self._flush_history()
+        self._sync_actions()
+        self.statusBar().showMessage("正在读取照片…")
+        worker = ImageLoadWorker(filename, self.runtime_settings.active_preview_size, self._load_generation)
+        worker.signals.finished.connect(self._image_loaded)
+        worker.signals.failed.connect(self._image_load_failed)
+        self._task_pool.start(worker)
+
+    def _image_loaded(self, loaded, preview, request_id: int) -> None:
+        if request_id != self._load_generation:
+            return
+        self._loading = False
+        self._install_loaded_image(loaded, preview)
+        self._sync_actions()
+        self._finish_pending_close()
+
+    def _image_load_failed(self, message: str, request_id: int) -> None:
+        if request_id != self._load_generation:
+            return
+        self._loading = False
+        self._sync_actions()
+        QMessageBox.critical(self, "无法打开图片", message)
+        self._finish_pending_close()
 
     def open_image_dialog(self) -> None:
         start = self.settings.value("last_open_dir", str(Path.home()))
@@ -303,18 +454,37 @@ class MainWindow(QMainWindow):
             "图片 (*.jpg *.jpeg *.png);;所有文件 (*)",
         )
         if filename:
-            self.open_image(filename)
+            self.open_image_async(filename)
 
     def open_image(self, filename: str) -> None:
+        """Synchronous API retained for integrations; interactive entrypoints use a worker."""
+        if self._ai_worker is not None:
+            return
         try:
             loaded = load_image(filename)
             preview = make_preview(loaded.pixels, self.runtime_settings.active_preview_size)
         except Exception as exc:  # user-facing boundary
             QMessageBox.critical(self, "无法打开图片", str(exc))
             return
+        self._load_generation += 1
+        self._loading = False
+        self._install_loaded_image(loaded, preview)
+
+    def _install_loaded_image(self, loaded, preview) -> None:
+        self._flush_history()
+        self._document_generation += 1
         self._render_generation += 1
         self._render_timer.stop()
         self._history_timer.stop()
+        self._active_interaction = False
+        self._showing_before = False
+        self._last_ai_prompt = ""
+        self._ai_details = ""
+        self._last_ai_error = None
+        self.ai_panel.clear_session()
+        self.split_action.setChecked(False)
+        self.image_view.clear_image()
+        self.image_view._fit_on_resize = True
         self.loaded_image = loaded
         self.state = EditorState()
         self.history.reset(self.state, f"打开：{loaded.path.name}")
@@ -327,17 +497,12 @@ class MainWindow(QMainWindow):
             )
             if answer == QMessageBox.StandardButton.Yes:
                 try:
-                    self.state = EditorState.model_validate(recovered["state"])
-                    history_entries = recovered.get("history", [])
-                    if history_entries:
-                        first = EditorState.model_validate(history_entries[0]["state"])
-                        self.history.reset(first, str(history_entries[0].get("label", "打开图片")))
-                        for entry in history_entries[1:]:
-                            self.history.push(EditorState.model_validate(entry["state"]), str(entry.get("label", "编辑")))
+                    self.state = self.session_store.restore(recovered, self.history)
                 except (KeyError, TypeError, ValueError):
                     self.state = EditorState()
                     self.history.reset(self.state, f"打开：{loaded.path.name}")
         self.preview_source = preview
+        self._interactive_source = make_preview(preview, self.runtime_settings.interaction_preview_size)
         self.current_preview = preview.copy()
         self.adjustments.set_state(self.state)
         self.mask_panel.set_state(self.state)
@@ -346,6 +511,8 @@ class MainWindow(QMainWindow):
         self.histogram.set_image(preview)
         self.settings.setValue("last_open_dir", str(loaded.path.parent))
         self.setWindowTitle(f"{loaded.path.name} — AI Lightroom")
+        self.photo_label.setText(loaded.path.name)
+        self.photo_label.setToolTip(str(loaded.path))
         self.statusBar().showMessage(loaded.description)
         self._refresh_history_ui()
         self.adjustments.set_enabled_for_image(True)
@@ -354,6 +521,7 @@ class MainWindow(QMainWindow):
         self.export_as_action.setEnabled(True)
         self._add_recent_file(loaded.path)
         self._refresh_ai_status()
+        self._sync_actions()
         if not self.state.is_pristine():
             self._queue_preview_render()
 
@@ -381,9 +549,11 @@ class MainWindow(QMainWindow):
         self._render_generation += 1
         self._render_timer.stop()
         self.preview_source = make_preview(self.loaded_image.pixels, self.runtime_settings.active_preview_size)
+        self._interactive_source = make_preview(self.preview_source, self.runtime_settings.interaction_preview_size)
         self.current_preview = self.preview_source.copy()
         self.image_view.set_image(self.preview_source)
         self.histogram.set_image(self.preview_source)
+        self.image_view.set_comparison(self.preview_source, self.split_action.isChecked())
         self._update_mask_overlay()
         if not self.state.is_pristine():
             self._queue_preview_render()
@@ -418,7 +588,7 @@ class MainWindow(QMainWindow):
     def dropEvent(self, event) -> None:  # noqa: N802
         for url in event.mimeData().urls():
             if url.isLocalFile() and Path(url.toLocalFile()).suffix.lower() in {".jpg", ".jpeg", ".png"}:
-                self.open_image(url.toLocalFile())
+                self.open_image_async(url.toLocalFile())
                 event.acceptProposedAction()
                 return
         event.ignore()
@@ -446,7 +616,7 @@ class MainWindow(QMainWindow):
         for filename in recent:
             action = self.recent_menu.addAction(Path(filename).name)
             action.setToolTip(filename)
-            action.triggered.connect(lambda _checked=False, value=filename: self.open_image(value))
+            action.triggered.connect(lambda _checked=False, value=filename: self.open_image_async(value))
 
     def _set_basic_adjustment(self, key: str, value: float) -> None:
         if self.preview_source is None:
@@ -455,8 +625,7 @@ class MainWindow(QMainWindow):
             self.state.basic = self.state.basic.with_value(key, value)
         except (KeyError, ValueError):
             return
-        self._render_generation += 1
-        self._render_timer.start()
+        self._queue_preview_render()
         label = self.adjustments.controls[key].label.text()
         self._schedule_history(f"调整：{label}")
 
@@ -495,10 +664,13 @@ class MainWindow(QMainWindow):
             return
         self._queue_preview_render()
         self._schedule_history(f"调整{section}")
+        if section == "transform":
+            self._update_mask_overlay()
 
     def _queue_preview_render(self) -> None:
         self._render_generation += 1
-        self._render_timer.start()
+        if not self._render_timer.isActive():
+            self._render_timer.start()
 
     def _begin_interaction(self, label: str) -> None:
         if self.preview_source is None or self._active_interaction:
@@ -513,6 +685,7 @@ class MainWindow(QMainWindow):
         self._active_interaction = False
         self._pending_history_label = label or self._interaction_label
         self._flush_history()
+        self._queue_preview_render()
 
     def _create_mask(self, requested_type: str) -> None:
         if self.preview_source is None:
@@ -549,7 +722,7 @@ class MainWindow(QMainWindow):
             parameters=parameters,
         )
         if mask_type in {MaskType.SKY, MaskType.SUBJECT, MaskType.SEMANTIC}:
-            confidence = mask_confidence(generate_mask(self.preview_source, layer), semantic_label or mask_type.value)
+            confidence = mask_confidence(generate_mask(prepare_mask_source(self.preview_source, self.state), layer), semantic_label or mask_type.value)
             if confidence <= 0:
                 self.statusBar().showMessage(f"未能可靠识别{names[mask_type]}区域，请手动选择或使用画笔。", 8000)
                 return
@@ -583,7 +756,7 @@ class MainWindow(QMainWindow):
 
     def _set_mask_property(self, mask_id: str, key: str, value) -> None:
         layer = self._mask_by_id(mask_id)
-        if layer is None or key not in {"enabled", "inverted", "opacity", "feather"}:
+        if layer is None or key not in {"enabled", "inverted", "opacity", "feather", "parameters"}:
             return
         setattr(layer, key, value)
         self._queue_preview_render()
@@ -591,6 +764,8 @@ class MainWindow(QMainWindow):
         self._schedule_history(f"更新蒙版：{layer.name}")
 
     def _add_brush_stroke(self, points, size: float) -> None:
+        if self._ai_worker is not None or self._loading:
+            return
         mask_id = self.mask_panel.selected_mask_id
         layer = self._mask_by_id(mask_id) if mask_id else None
         if layer is None or layer.type != MaskType.BRUSH:
@@ -603,6 +778,7 @@ class MainWindow(QMainWindow):
         )
         layer.strokes.append(stroke)
         self._queue_preview_render()
+        self._update_mask_overlay()
         self.history.push(self.state, f"画笔：{layer.name}")
         self._refresh_history_ui()
 
@@ -634,7 +810,7 @@ class MainWindow(QMainWindow):
 
     def _set_watermark_property(self, layer_id: str, key: str, value) -> None:
         layer = next((item for item in self.state.watermarks if item.id == layer_id), None)
-        if layer is None or key not in {"enabled", "position", "scale", "opacity", "margin"}:
+        if layer is None or key not in {"enabled", "position", "scale", "opacity", "margin", "x", "y"}:
             return
         setattr(layer, key, value)
         self._queue_preview_render()
@@ -686,7 +862,7 @@ class MainWindow(QMainWindow):
         return next((layer for layer in self.state.masks if layer.id == mask_id), None)
 
     def _update_mask_overlay(self) -> None:
-        if self.preview_source is None or not self.mask_panel.preview_button.isChecked():
+        if self.preview_source is None or self._showing_before or self.split_action.isChecked() or not self.mask_panel.preview_button.isChecked():
             self.image_view.set_mask_overlay(None)
             return
         layer = self._mask_by_id(self.mask_panel.selected_mask_id or "")
@@ -694,14 +870,14 @@ class MainWindow(QMainWindow):
             self.image_view.set_mask_overlay(None)
             return
         try:
-            self.image_view.set_mask_overlay(generate_mask(self.preview_source, layer))
+            self.image_view.set_mask_overlay(generate_mask(prepare_mask_source(self.preview_source, self.state), layer))
         except ValueError:
             self.image_view.set_mask_overlay(None)
 
     def reset_edits(self) -> None:
         if self.preview_source is None:
             return
-        self._history_timer.stop()
+        self._flush_history()
         if self.state.is_pristine():
             return
         self.state = EditorState()
@@ -721,6 +897,7 @@ class MainWindow(QMainWindow):
         self._history_timer.start()
 
     def _flush_history(self) -> None:
+        self._history_timer.stop()
         if self.preview_source is None:
             return
         if self.history.push(self.state, self._pending_history_label):
@@ -733,6 +910,7 @@ class MainWindow(QMainWindow):
             self._restore_state(state)
 
     def redo(self) -> None:
+        self._flush_history()
         state = self.history.redo()
         if state is not None:
             self._restore_state(state)
@@ -746,10 +924,13 @@ class MainWindow(QMainWindow):
             self._restore_state(state)
 
     def _restore_state(self, state: EditorState) -> None:
+        self._history_timer.stop()
+        self._active_interaction = False
         self.state = state
         self.adjustments.set_state(state)
         self.mask_panel.set_state(state)
         self.watermark_panel.set_state(state)
+        self._update_mask_overlay()
         self._render_generation += 1
         self._render_timer.stop()
         self._start_preview_render()
@@ -763,26 +944,48 @@ class MainWindow(QMainWindow):
         if self.history.cursor >= 0:
             self.history_list.setCurrentRow(self.history.cursor)
         self.history_list.blockSignals(False)
-        self.undo_action.setEnabled(self.history.can_undo)
-        self.redo_action.setEnabled(self.history.can_redo)
+        self._sync_actions()
         if self.loaded_image is not None:
+            self._save_session()
+
+    def _save_session(self) -> None:
+        if self.loaded_image is None:
+            return
+        try:
             self.session_store.save(self.loaded_image.path, self.state, self.history)
+        except (OSError, ValueError):
+            logging.getLogger(__name__).exception("Could not save edit session")
+            self.statusBar().showMessage("编辑仍在内存中，但自动保存失败；请导出成片。", 7000)
 
     def closeEvent(self, event) -> None:  # noqa: N802
+        if self._ai_worker is not None or self._export_worker is not None or self._loading:
+            self._close_when_idle = True
+            if self._ai_worker is not None:
+                self._ai_worker.cancel()
+            self.statusBar().showMessage("正在等待后台任务安全结束，完成后自动关闭…")
+            event.ignore()
+            return
+        self._closing = True
+        self._render_timer.stop()
         self._flush_history()
-        if self.loaded_image is not None:
-            self.session_store.save(self.loaded_image.path, self.state, self.history)
-        try:
-            from app.ai.jarvisart.service import JarvisArtServiceManager
-            JarvisArtServiceManager(
-                self.runtime_settings.jarvisart_root,
-                self.runtime_settings.jarvisart_endpoint,
-            ).stop_owned()
-        except Exception:
-            pass
+        self._save_session()
+        self.settings.setValue("workspace/geometry", self.saveGeometry())
+        if not self.focus_action.isChecked():
+            self.settings.setValue("workspace/sizes", self.workspace_splitter.sizes())
+        self.settings.sync()
+        self._render_pool.clear()
+        self._render_pool.waitForDone()
+        # A local bridge may also be serving Lightroom Classic. Closing this
+        # client is not permission to stop that shared service.
         super().closeEvent(event)
 
+    def _finish_pending_close(self) -> None:
+        if self._close_when_idle and self._ai_worker is None and self._export_worker is None and not self._loading:
+            QTimer.singleShot(0, self.close)
+
     def export_image_dialog(self) -> None:
+        if self._export_worker is not None or self._ai_worker is not None or self._loading:
+            return
         if self.loaded_image is None:
             QMessageBox.information(self, "没有可导出的图片", "请先打开一张图片。")
             return
@@ -799,6 +1002,9 @@ class MainWindow(QMainWindow):
         path = Path(filename)
         if not path.suffix:
             path = path.with_suffix(".png" if selected.startswith("PNG") else ".jpg")
+        if path.resolve() == self.loaded_image.path.resolve():
+            QMessageBox.warning(self, "请保留原图", "导出不能覆盖当前原始照片。请选择其他文件名。")
+            return
         quality = self.runtime_settings.export_jpeg_quality
         if path.suffix.lower() in {".jpg", ".jpeg"}:
             quality, accepted = QInputDialog.getInt(self, "JPEG 质量", "质量（1–100）", quality, 1, 100)
@@ -812,34 +1018,42 @@ class MainWindow(QMainWindow):
             "exif": self.loaded_image.exif,
             "dpi": self.loaded_image.dpi,
         }
-        worker = ExportWorker(self.loaded_image.pixels, self.state, str(path), quality, metadata)
+        worker = ExportWorker(self.loaded_image.pixels, self.state, str(path), quality, metadata, source_path=self.loaded_image.path)
         self._export_worker = worker
         worker.signals.finished.connect(self._export_finished)
         worker.signals.failed.connect(self._export_failed)
-        self._render_pool.start(worker)
+        self._task_pool.start(worker)
 
     def _export_finished(self, filename: str) -> None:
         self.export_action.setEnabled(True)
         self.export_as_action.setEnabled(True)
         self._export_worker = None
+        self._sync_actions()
         self.statusBar().showMessage(f"已导出：{filename}", 8000)
+        self._finish_pending_close()
 
     def _export_failed(self, details: str) -> None:
         self.export_action.setEnabled(True)
         self.export_as_action.setEnabled(True)
         self._export_worker = None
+        self._sync_actions()
         self.statusBar().showMessage("导出失败")
         last_line = next((line for line in reversed(details.splitlines()) if line.strip()), "未知错误")
         QMessageBox.critical(self, "导出失败", last_line)
+        self._finish_pending_close()
 
     def _start_preview_render(self) -> None:
-        if self.preview_source is None:
+        if self.preview_source is None or self._closing:
             return
         if self._render_in_flight:
             self._render_dirty = True
             return
         generation = self._render_generation
-        worker = PreviewRenderWorker(self.preview_source, self.state, generation)
+        fast = self._active_interaction and self._interactive_source is not None
+        source = self._interactive_source if fast else self.preview_source
+        worker = PreviewRenderWorker(source, self.state, generation)
+        self._render_document = self._document_generation
+        self._render_started_at = time.perf_counter()
         worker.signals.finished.connect(self._preview_rendered)
         worker.signals.failed.connect(self._preview_failed)
         self._render_in_flight = True
@@ -847,25 +1061,38 @@ class MainWindow(QMainWindow):
 
     def _preview_rendered(self, pixels, generation: int) -> None:
         self._render_in_flight = False
-        if generation != self._render_generation:
-            self._render_dirty = False
-            self._render_timer.start()
+        if self._closing:
             return
-        self.image_view.set_image(pixels)
-        self.current_preview = pixels
-        self.histogram.set_image(pixels)
-        if self._render_dirty:
+        stale = generation != self._render_generation
+        same_document = getattr(self, "_render_document", self._document_generation) == self._document_generation
+        # Publish completed frames during dragging rather than starving the canvas
+        # until the mouse stops. Never publish a previous photograph's result.
+        if same_document and (not stale or self._active_interaction):
+            self.current_preview = pixels
+            if not self._showing_before:
+                self.image_view.set_image(pixels, (self.preview_source.shape[1], self.preview_source.shape[0]))
+                self.histogram.set_image(pixels)
+            elapsed = (time.perf_counter() - self._render_started_at) * 1000
+            label = "交互预览" if self._active_interaction else "精细预览"
+            self.render_label.setText(f"{label} · {elapsed:.0f} ms")
+        if self._render_dirty or stale:
             self._render_dirty = False
             self._render_timer.start()
-        self.statusBar().showMessage(f"{self.loaded_image.description}  •  已编辑")
+        if same_document and not self._showing_before and self._ai_worker is None and self._export_worker is None:
+            status = "正在调整" if self._active_interaction else ("原始状态" if self.state.is_pristine() else "参数已更新")
+            self.statusBar().showMessage(f"{self.loaded_image.description}  ·  {status}")
 
     def _preview_failed(self, details: str, generation: int) -> None:
         self._render_in_flight = False
+        if self._closing:
+            return
         if generation != self._render_generation:
             self._render_dirty = False
             self._render_timer.start()
             return
         self.statusBar().showMessage("预览渲染失败；已保留当前参数")
+        logging.getLogger(__name__).error("Preview rendering failed: %s", details)
+        self.render_label.setText("预览失败 · 可撤回重试")
         if self._render_dirty:
             self._render_dirty = False
             self._render_timer.start()
@@ -873,6 +1100,8 @@ class MainWindow(QMainWindow):
     def _show_before(self) -> None:
         if self.preview_source is not None:
             self._showing_before = True
+            self.image_view.set_comparison(None, False)
+            self.image_view.set_mask_overlay(None)
             self.image_view.set_image(self.preview_source)
             self.histogram.set_image(self.preview_source)
             self.statusBar().showMessage("正在显示原图")
@@ -881,8 +1110,10 @@ class MainWindow(QMainWindow):
         if self._showing_before:
             self._showing_before = False
             if self.current_preview is not None:
-                self.image_view.set_image(self.current_preview)
+                self.image_view.set_image(self.current_preview, (self.preview_source.shape[1], self.preview_source.shape[0]))
                 self.histogram.set_image(self.current_preview)
+            self.image_view.set_comparison(self.preview_source, self.split_action.isChecked())
+            self._update_mask_overlay()
             self.statusBar().showMessage("已恢复编辑结果")
 
     def _toggle_before_after(self) -> None:
@@ -906,10 +1137,12 @@ class MainWindow(QMainWindow):
             "calibration": self.state.calibration.model_dump(mode="json"),
         }
         self.statusBar().showMessage("已复制全局、细节、效果、光学、几何、校准、HSL 和曲线调整（不含蒙版和水印）", 5000)
+        self._sync_actions()
 
     def paste_adjustments(self) -> None:
         if self.preview_source is None or not self._adjustment_clipboard:
             return
+        self._flush_history()
         payload = self.state.model_dump(mode="json")
         payload.update(self._adjustment_clipboard)
         try:
@@ -918,10 +1151,13 @@ class MainWindow(QMainWindow):
             return
         self.adjustments.set_state(self.state)
         self._queue_preview_render()
+        self._update_mask_overlay()
         self.history.push(self.state, "粘贴调整")
         self._refresh_history_ui()
 
     def _run_ai_edit(self, prompt: str) -> None:
+        if self._loading or self._closing or not prompt.strip():
+            return
         if self.preview_source is None:
             self.ai_panel.add_assistant_message("请先打开一张图片。")
             return
@@ -969,16 +1205,20 @@ class MainWindow(QMainWindow):
             self.mask_panel.selected_mask_id,
         )
         self._ai_worker = worker
+        self._ai_before_state = self.state.snapshot()
+        self._ai_document = self._document_generation
         worker.signals.finished.connect(self._ai_finished)
         worker.signals.failed.connect(self._ai_failed)
         self.ai_panel.set_busy(True)
+        self.editor_tabs.setCurrentWidget(self.ai_panel)
+        self._sync_actions()
         self._last_ai_error = None
         self.ai_panel.set_retry_available(False)
         ai_quality = self._preview_quality_label(self.runtime_settings.effective_ai_preview_quality)
         self.statusBar().showMessage(
             f"AI 正在分析当前画面和编辑状态… 视觉分析将使用{ai_quality} JPEG 预览（最长边 {self.runtime_settings.active_ai_preview_size}px）。"
         )
-        self._render_pool.start(worker)
+        self._task_pool.start(worker)
 
     def _show_jarvisart_mock_notice(self) -> None:
         """Never let a fixed fixture masquerade as visual inference."""
@@ -1017,18 +1257,35 @@ class MainWindow(QMainWindow):
 
     def _ai_finished(self, result) -> None:
         self._ai_worker = None
+        self.ai_panel.set_busy(False)
+        if self._ai_document != self._document_generation or self._ai_before_state != self.state or self._close_when_idle:
+            self.ai_panel.add_assistant_message("当前照片或调整已变化；旧请求的结果未覆盖当前编辑。")
+            self._sync_actions()
+            self._finish_pending_close()
+            return
         self.state = result.state
         self.adjustments.set_state(self.state)
         self.mask_panel.set_state(self.state)
+        self.watermark_panel.set_state(self.state)
+        self._update_mask_overlay()
         self.history.push(self.state, f"AI：{result.final_plan.summary}")
         self._refresh_history_ui()
         self._render_generation += 1
         self._render_timer.stop()
-        self._start_preview_render()
+        pixels = getattr(result, "preview_pixels", None)
+        if pixels is not None:
+            self.current_preview = pixels
+            if not self._showing_before:
+                self.image_view.set_image(pixels, (self.preview_source.shape[1], self.preview_source.shape[0]))
+                self.histogram.set_image(pixels)
+        if pixels is None or pixels.shape != self.preview_source.shape:
+            self._start_preview_render()
         self.ai_panel.set_busy(False)
         self.ai_panel.set_result_info(result.provider_name, True)
         self._refresh_ai_status(result.provider_name)
-        self.ai_panel.add_assistant_message(result.final_plan.summary)
+        self.ai_panel.add_assistant_message(result.final_plan.summary if getattr(result, "has_changes", True) else "方案未改变当前调整。可换一个更具体的要求，或直接手动调整。")
+        for warning in getattr(result, "warnings", []):
+            self.ai_panel.add_assistant_message(warning)
         details = [
             f"方案：{result.final_plan.summary}",
             f"依据：{result.final_plan.reasoning_summary}",
@@ -1040,11 +1297,15 @@ class MainWindow(QMainWindow):
             details.append("\n参数与局部调整：\n- " + "\n- ".join(result.changed_fields))
         if result.created_masks:
             details.append("\n创建蒙版：\n- " + "\n- ".join(result.created_masks))
+        if getattr(result, "warnings", []):
+            details.append("\n未执行的区域：\n- " + "\n- ".join(result.warnings))
         if result.unsupported_operations:
-            warning = f"JarvisArt 请求了 {len(result.unsupported_operations)} 个当前不支持的 Lightroom 操作；未静默执行。"
+            warning = f"有 {len(result.unsupported_operations)} 项原生 Lightroom 操作无法应用，详见调整详情。其他有效操作已执行。"
             self.ai_panel.add_assistant_message(warning)
             details.append("\n未支持的 JarvisArt 操作：\n- " + "\n- ".join(result.unsupported_operations))
         self._ai_details = "\n".join(details)
+        self._sync_actions()
+        self._finish_pending_close()
 
     def _ai_failed(self, traceback_text: str) -> None:
         self._ai_worker = None
@@ -1064,6 +1325,8 @@ class MainWindow(QMainWindow):
         self.ai_panel.add_assistant_message(visible_error)
         self.statusBar().showMessage(f"AI 请求失败：{error.category}；当前编辑未改变", 10000)
         self._refresh_ai_status()
+        self._sync_actions()
+        self._finish_pending_close()
 
     def _show_ai_details(self) -> None:
         if self._ai_details:
@@ -1081,11 +1344,14 @@ class MainWindow(QMainWindow):
                 box.exec()
 
     def open_settings(self) -> None:
+        if self._ai_worker is not None or self._loading:
+            return
         dialog = SettingsDialog(self.settings_manager, self)
         if dialog.exec():
             previous_edge = self.runtime_settings.active_preview_size
             self.runtime_settings = self.settings_manager.runtime()
-            self._render_pool.setMaxThreadCount(self.runtime_settings.worker_threads)
+            if self.preview_source is not None:
+                self._interactive_source = make_preview(self.preview_source, self.runtime_settings.interaction_preview_size)
             self._update_preview_quality_actions()
             if self.loaded_image is not None and previous_edge != self.runtime_settings.active_preview_size:
                 self._rebuild_visible_preview_source()
@@ -1113,8 +1379,7 @@ class MainWindow(QMainWindow):
                 if config.local_mode == "mock":
                     return "⚠ JarvisArt Local · 离线 Mock 测试（不会分析照片）"
                 else:
-                    from app.ai.jarvisart.service import JarvisArtServiceManager
-                    state = JarvisArtServiceManager(config.jarvisart_root, config.jarvisart_endpoint).status().state
+                    state = self._provider_health
                 return f"JarvisArt Local GGUF · {state} · 本地，无云端费用 · {self._preview_quality_label()}预览"
             if config.provider_id == "mock":
                 return "⚠ Offline Mock（仅开发测试；不会分析照片）"
@@ -1135,6 +1400,18 @@ class MainWindow(QMainWindow):
             self.ai_panel.set_provider_status(f"本次规划：{completed_provider} · {self.runtime_settings.active_model}")
         else:
             self.ai_panel.set_provider_status(self._provider_status_text())
+        config = self.runtime_settings.provider_config
+        if config.provider_id == "jarvisart_local" and config.local_mode == "real" and self._provider_health_worker is None:
+            worker = JarvisArtControlWorker(config.jarvisart_root, config.jarvisart_endpoint, "status")
+            self._provider_health_worker = worker
+            worker.signals.finished.connect(self._provider_health_received)
+            self._task_pool.start(worker)
+
+    def _provider_health_received(self, status) -> None:
+        self._provider_health_worker = None
+        self._provider_health = status.state
+        if not self._closing and self.runtime_settings.provider == "jarvisart_local":
+            self.ai_panel.set_provider_status(self._provider_status_text())
 
     def _show_about(self) -> None:
         QMessageBox.about(
@@ -1144,7 +1421,7 @@ class MainWindow(QMainWindow):
             "一个支持传统非破坏式照片编辑与可选 AI 调色计划的桌面应用。\n"
             "License: MIT\n"
             "JarvisArt 是独立可选组件，遵循其自身许可证；AI Lightroom 不隶属于 Adobe。\n"
-            "GitHub repository: configured after public release.",
+            "https://github.com/Garry-Tang-274/AI-Lightroom",
         )
 
     def _open_logs_folder(self) -> None:

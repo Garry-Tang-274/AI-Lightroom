@@ -12,7 +12,7 @@ The provider checks `/health`, starts only the selected existing launcher, and c
 
 ## Lifecycle
 
-The settings panel reports Offline, Loading, Ready, or Error. **Stop and release GPU** stops only processes launched by the current AI Lightroom process; shared services started by Lightroom Classic or another tool are not killed. Closing AI Lightroom has the same ownership rule.
+The settings panel reports Offline, Loading, Ready, or Error. Closing AI Lightroom leaves the local service running so other clients can continue using it. To stop a service deliberately, use **文件 → 设置 → AI 服务 → 停止并释放显存 / File → Settings → AI service → Stop and release GPU**. This stops only processes launched by the current AI Lightroom process; services owned by Lightroom Classic or another launcher are not killed.
 
 ## Lightroom Classic coexistence
 
@@ -24,7 +24,11 @@ Lightroom Classic menu placement, Develop-module invocation, and keyboard-shortc
 
 ## Current bridge scope
 
-The current JarvisArt local bridge returns Lightroom global parameters and some HSL parameters. AI Lightroom maps supported settings to `EditingPlan` and lists unsupported Lightroom operations instead of silently pretending to apply them. Native local masks and Lightroom-only operations remain a future bridge capability.
+The current local bridge returns Lightroom Develop parameters. The adapter supports the implemented tone, HSL, RGB/channel curves, detail/noise, vignette/grain, defringe, geometry, calibration, and colour-grading controls. It parses the data without executing Lua, validates the plan, and applies it through the same local renderer as manual edits.
+
+Unknown operations remain listed in adjustment details. An invalid response or a plan with no usable operations is not presented as a successful edit. Lightroom-specific rendering, lens profiles, Lens Blur, Point Color, and Generative Remove are not reproduced by this renderer; native local masks also depend on what the separate bridge can return.
+
+In 1.1, open the right **AI 助手 / AI Assistant** tab to send a request and inspect its details. Conflicting edits are disabled until the request completes, and the applied plan is one undo step. Use `C` for the draggable original/result comparison. The fast preview used while dragging sliders follows the performance mode (Balanced 1280 px by default, Battery 768 px, Fine interaction 1600 px); it does not reduce the independently configured AI image size.
 
 Use only a local GGUF/runtime that you are permitted to use. If your model derives from JarvisArt or another project, read and follow that upstream project's license before use.
 
@@ -50,4 +54,4 @@ The request is deliberately constrained: it specifies the intended mood and the 
   <em>Reference workflow: inspect the result, refine the prompt, then compare the recorded plan before keeping the edit.</em>
 </p>
 
-The screenshot illustrates the application workflow, not a claim that every native Lightroom Classic panel is embedded in AI Lightroom. A practical loop is to inspect the result, submit one focused follow-up request, and use history/undo to compare the validated plan with the prior non-destructive state.
+This reference image shows an earlier workspace layout. In 1.1, the prompt lives in the right **AI 助手 / AI Assistant** tab. Inspect the result, submit a focused follow-up, and use history/undo or split comparison before keeping the edit.

@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.1.0 - 2026-11-17 — Workspace & Reliability
+
+- Reorganised the dark workspace into Adjustments and AI Assistant tabs, with searchable/collapsible parameter groups, a persistent histogram, background image loading, a draggable before/after split (`C`), and focus mode (`Ctrl+Tab`).
+- Added performance-mode-driven interactive previews while dragging: Balanced (default) caps the longest edge at 1280 px, Battery at 768 px, and Fine interaction at 1600 px. Release returns to the selected Low/High quality; AI input and full-resolution export remain independent.
+- Fixed wheel changes in numeric fields/selectors, nonzero slider resets, stale HSL/grading channel values, and duplicate-x curve edits. Added editable gradient/range-mask geometry and exact custom watermark positions.
+- Preserved the selected history position and redo branch on recovery. Watermark and curve interactions are complete undo transactions; AI work disables conflicting edits and avoids empty success history entries.
+- Hardened JarvisArt data parsing and AI error handling while preserving one default cloud request, no automatic retry, visible unsupported operations, and cancellation checks. Closing the app no longer stops a shared JarvisArt service.
+- Fixed the local-adjustment vignette crash, cumulative watermark opacity, preview/export watermark sizing, mask-cache precision drift, and ICC working-space handling. Reduced unnecessary rendering work and image-sized temporaries.
+- Export now refuses the source photo and replaces its output atomically only after encoding succeeds. Added regression coverage for the repaired editing, rendering, AI, and recovery paths.
+
+[中文更新日志](CHANGELOG_zh-CN.md) · [Bilingual release guide / 双语发布指南](docs/RELEASE_1_1.md)
+
 ## 1.0.3 - 2026-08-09
 
 - Expanded the deterministic Develop pipeline with JarvisArt-compatible detail, luminance/color noise reduction, post-crop vignette controls, grain, defringe, geometry, primary calibration, color grading, split-toning aliases, and RGB/R/G/B tone-curve support.

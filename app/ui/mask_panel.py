@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.core.editor_state import EditorState, MaskType
-from app.ui.adjustment_panel import ParameterSlider, SliderSpec
+from app.ui.adjustment_panel import CollapsibleSection, NoWheelComboBox, ParameterSlider, SliderSpec
 
 
 LOCAL_SPECS = (
@@ -26,7 +26,7 @@ LOCAL_SPECS = (
     SliderSpec("whites", "白色色阶", -100, 100),
     SliderSpec("blacks", "黑色色阶", -100, 100),
     SliderSpec("temperature", "色温", -100, 100),
-    SliderSpec("tint", "Tint", -100, 100),
+    SliderSpec("tint", "色调", -100, 100),
     SliderSpec("saturation", "饱和度", -100, 100),
     SliderSpec("vibrance", "自然饱和度", -100, 100),
     SliderSpec("clarity", "清晰度", -100, 100),
@@ -34,6 +34,32 @@ LOCAL_SPECS = (
     SliderSpec("dehaze", "去朦胧", -100, 100),
     SliderSpec("sharpen", "锐化", 0, 100),
 )
+
+
+MASK_PARAMETER_SPECS = {
+    MaskType.LINEAR_GRADIENT: (
+        SliderSpec("start_x", "起点 X", 0, 100, 100, 0.5),
+        SliderSpec("start_y", "起点 Y", 0, 100, 100),
+        SliderSpec("end_x", "终点 X", 0, 100, 100, 0.5),
+        SliderSpec("end_y", "终点 Y", 0, 100, 100, 0.65),
+    ),
+    MaskType.RADIAL_GRADIENT: (
+        SliderSpec("center_x", "中心 X", 0, 100, 100, 0.5),
+        SliderSpec("center_y", "中心 Y", 0, 100, 100, 0.5),
+        SliderSpec("radius_x", "水平半径", 1, 150, 100, 0.35),
+        SliderSpec("radius_y", "垂直半径", 1, 150, 100, 0.35),
+        SliderSpec("rotation", "旋转角度", -180, 180),
+    ),
+    MaskType.LUMINANCE_RANGE: (
+        SliderSpec("min", "明度下限", 0, 100, 100, 0.55),
+        SliderSpec("max", "明度上限", 0, 100, 100, 1.0),
+    ),
+    MaskType.COLOR_RANGE: (
+        SliderSpec("hue", "目标色相", 0, 360, default=210),
+        SliderSpec("tolerance", "色相范围", 1, 180, default=35),
+        SliderSpec("min_saturation", "最低饱和度", 0, 100, 100, 0.08),
+    ),
+}
 
 
 class MaskPanel(QWidget):
@@ -53,7 +79,7 @@ class MaskPanel(QWidget):
         self._updating = False
         self._selected_id: str | None = None
 
-        self.type_selector = QComboBox()
+        self.type_selector = NoWheelComboBox()
         for label, key in (
             ("线性渐变", MaskType.LINEAR_GRADIENT.value),
             ("径向渐变", MaskType.RADIAL_GRADIENT.value),
@@ -77,7 +103,7 @@ class MaskPanel(QWidget):
         self.add_button.setObjectName("accentButton")
         self.remove_button = QPushButton("删除")
         self.remove_button.setEnabled(False)
-        self.preview_button = QPushButton("显示 Mask")
+        self.preview_button = QPushButton("显示蒙版")
         self.preview_button.setCheckable(True)
         self.preview_button.setEnabled(False)
         self.list_widget = QListWidget()
@@ -105,21 +131,35 @@ class MaskPanel(QWidget):
         checks.addStretch()
         properties_layout.addLayout(checks)
 
-        self.opacity_control = ParameterSlider(SliderSpec("opacity", "不透明度", 0, 100, 100))
-        self.feather_control = ParameterSlider(SliderSpec("feather", "羽化", 0, 100, 100))
+        self.opacity_control = ParameterSlider(SliderSpec("opacity", "不透明度", 0, 100, 100, 1.0, 100, "%"))
+        self.feather_control = ParameterSlider(SliderSpec("feather", "羽化", 0, 100, 100, 0.5, 100, "%"))
         properties_layout.addWidget(self.opacity_control)
         properties_layout.addWidget(self.feather_control)
+
+        self.range_section = CollapsibleSection("区域与范围", "Mask geometry / range", expanded=True)
+        self.parameter_controls: dict[MaskType, dict[str, ParameterSlider]] = {}
+        for mask_type, specs in MASK_PARAMETER_SPECS.items():
+            controls = self.parameter_controls.setdefault(mask_type, {})
+            for spec in specs:
+                control = ParameterSlider(spec)
+                control.value_changed.connect(self._parameter_changed)
+                control.interaction_started.connect(lambda _key: self.interaction_started.emit("调整蒙版范围"))
+                control.interaction_finished.connect(lambda _key: self.interaction_finished.emit("调整蒙版范围"))
+                self.range_section.body_layout.addWidget(control)
+                controls[spec.key] = control
+        properties_layout.addWidget(self.range_section)
+        self.range_section.hide()
 
         self.paint_button = QPushButton("在图片上绘制")
         self.paint_button.setCheckable(True)
         self.paint_button.setVisible(False)
-        self.brush_size = ParameterSlider(SliderSpec("brush_size", "画笔大小", 1, 40, 100))
+        self.brush_size = ParameterSlider(SliderSpec("brush_size", "画笔大小", 1, 40, 100, 0.08, 100, "%"))
         self.brush_size.set_value(0.08)
         self.brush_size.setVisible(False)
-        self.brush_hardness = ParameterSlider(SliderSpec("brush_hardness", "画笔硬度", 0, 100, 100))
+        self.brush_hardness = ParameterSlider(SliderSpec("brush_hardness", "画笔硬度", 0, 100, 100, 0.65, 100, "%"))
         self.brush_hardness.set_value(0.65)
         self.brush_hardness.setVisible(False)
-        self.brush_opacity = ParameterSlider(SliderSpec("brush_opacity", "画笔不透明度", 1, 100, 100))
+        self.brush_opacity = ParameterSlider(SliderSpec("brush_opacity", "画笔不透明度", 1, 100, 100, 1.0, 100, "%"))
         self.brush_opacity.set_value(1.0)
         self.brush_opacity.setVisible(False)
         self.brush_erase = QCheckBox("擦除笔触")
@@ -163,7 +203,7 @@ class MaskPanel(QWidget):
         for control in (self.opacity_control, self.feather_control, *self.controls.values()):
             control.interaction_started.connect(lambda _key: self.interaction_started.emit("调整局部蒙版"))
             control.interaction_finished.connect(lambda _key: self.interaction_finished.emit("调整局部蒙版"))
-        self.preview_button.toggled.connect(self.mask_preview_toggled)
+        self.preview_button.toggled.connect(self._preview_toggled)
         self.paint_button.toggled.connect(self._paint_toggled)
         self.brush_size.value_changed.connect(self._brush_size_changed)
         self.properties.setEnabled(False)
@@ -186,6 +226,7 @@ class MaskPanel(QWidget):
 
     def set_state(self, state: EditorState, select_id: str | None = None) -> None:
         requested = select_id or self._selected_id
+        was_painting = self.paint_button.isChecked() and requested == self._selected_id
         self._state = state.snapshot()
         self._updating = True
         self.list_widget.clear()
@@ -210,6 +251,10 @@ class MaskPanel(QWidget):
             self.remove_button.setEnabled(False)
             self.preview_button.setEnabled(False)
             self.brush_mode_changed.emit(False, self._brush_size_value())
+            self.preview_button.setChecked(False)
+            self.mask_selected.emit("")
+        if was_painting and self._selected_layer() and self._selected_layer().type == MaskType.BRUSH:
+            self.paint_button.setChecked(True)
 
     def _selection_changed(self, current: QListWidgetItem | None, previous: QListWidgetItem | None) -> None:
         if self._updating:
@@ -231,6 +276,14 @@ class MaskPanel(QWidget):
         self.invert_check.setChecked(layer.inverted)
         self.opacity_control.set_value(layer.opacity)
         self.feather_control.set_value(layer.feather)
+        has_range = layer.type in self.parameter_controls
+        self.range_section.setVisible(has_range)
+        self.feather_control.setVisible(layer.type in {MaskType.RADIAL_GRADIENT, MaskType.LUMINANCE_RANGE, MaskType.COLOR_RANGE})
+        for mask_type, controls in self.parameter_controls.items():
+            for key, control in controls.items():
+                control.setVisible(mask_type == layer.type)
+                if mask_type == layer.type:
+                    control.set_value(float(layer.parameters.get(key, control.spec.default)))
         for key, control in self.controls.items():
             control.set_value(getattr(layer.adjustments, key))
         is_brush = layer.type == MaskType.BRUSH
@@ -250,11 +303,33 @@ class MaskPanel(QWidget):
 
     def _local_changed(self, key: str, value: float) -> None:
         if not self._updating and self._selected_id:
+            setattr(self._selected_layer().adjustments, key, value)
             self.local_adjustment_changed.emit(self._selected_id, key, value)
 
     def _property_changed(self, key: str, value) -> None:
         if not self._updating and self._selected_id:
+            setattr(self._selected_layer(), key, value)
             self.mask_property_changed.emit(self._selected_id, key, value)
+
+    def _parameter_changed(self, key: str, value: float) -> None:
+        if self._updating or not self._selected_id:
+            return
+        layer = self._selected_layer()
+        parameters = dict(layer.parameters)
+        parameters[key] = value
+        if layer.type == MaskType.LUMINANCE_RANGE:
+            other = "max" if key == "min" else "min"
+            other_default = 1.0 if other == "max" else 0.55
+            other_value = float(parameters.get(other, other_default))
+            if (key == "min" and value > other_value) or (key == "max" and value < other_value):
+                parameters[other] = value
+                self.parameter_controls[layer.type][other].set_value(value)
+        layer.parameters = parameters
+        self.mask_property_changed.emit(self._selected_id, "parameters", parameters)
+
+    def _preview_toggled(self, visible: bool) -> None:
+        self.preview_button.setText("隐藏蒙版" if visible else "显示蒙版")
+        self.mask_preview_toggled.emit(visible)
 
     def _paint_toggled(self, checked: bool) -> None:
         if not self._updating:

@@ -116,10 +116,14 @@ def apply_editing_plan(state: EditorState, plan: EditingPlan, selected_mask_id: 
         section, field, *nested = target
         if nested:
             wheel = getattr(updated.color_grading, field)
+            if getattr(wheel, nested[0]) == adjustment.value:
+                continue
             values = wheel.model_dump()
             values[nested[0]] = adjustment.value
             setattr(updated.color_grading, field, type(wheel).model_validate(values))
         elif section == "color_grading":
+            if getattr(updated.color_grading, field) == adjustment.value:
+                continue
             values = updated.color_grading.model_dump()
             values[field] = adjustment.value
             updated.color_grading = type(updated.color_grading).model_validate(values)
@@ -131,23 +135,33 @@ def apply_editing_plan(state: EditorState, plan: EditingPlan, selected_mask_id: 
                 value = int(round(adjustment.value))
             else:
                 value = adjustment.value
+            if getattr(values, field) == value:
+                continue
             setattr(updated, section, values.with_value(field, value))
-        changed.append(f"{section} {field} = {adjustment.value:+g}")
+        changed.append(f"{section} {'.'.join((field, *nested))} = {adjustment.value:+g}")
 
     for adjustment in plan.hsl_adjustments:
-        updated.hsl[adjustment.color] = HSLAdjustment(
+        value = HSLAdjustment(
             hue=adjustment.hue,
             saturation=adjustment.saturation,
             luminance=adjustment.luminance,
         )
+        if updated.hsl[adjustment.color] == value:
+            continue
+        updated.hsl[adjustment.color] = value
         changed.append(f"HSL {adjustment.color.value}")
 
     for adjustment in plan.curve_adjustments:
         channel = CURVE_FIELD_MAP[adjustment.tool]
-        setattr(updated.curves, channel, ToneCurve(points=adjustment.points))
+        curve = ToneCurve(points=adjustment.points)
+        if getattr(updated.curves, channel) == curve:
+            continue
+        setattr(updated.curves, channel, curve)
         changed.append(f"{channel.upper()} 曲线")
 
     for request in plan.requested_masks:
+        if request.ref in refs:
+            raise ValueError(f"AI plan contains a duplicate mask reference: {request.ref}")
         layer = MaskLayer(
             name=request.name,
             type=MASK_TYPE_MAP[request.tool],
@@ -166,6 +180,8 @@ def apply_editing_plan(state: EditorState, plan: EditingPlan, selected_mask_id: 
             raise ValueError(f"AI plan referenced an unknown mask: {local.mask_ref}")
         values = local.adjustments.model_dump(exclude_none=True)
         for key, value in values.items():
+            if getattr(layer.adjustments, key) == value:
+                continue
             layer.adjustments = layer.adjustments.with_value(key, value)
             changed.append(f"{layer.name} {key} = {value:+g}")
 

@@ -23,6 +23,7 @@ class ExportWorker(QRunnable):
         destination: str,
         jpeg_quality: int,
         metadata: dict,
+        source_path: str | Path | None = None,
     ) -> None:
         super().__init__()
         self.source = source
@@ -30,6 +31,7 @@ class ExportWorker(QRunnable):
         self.destination = destination
         self.jpeg_quality = jpeg_quality
         self.metadata = metadata
+        self.source_path = source_path
         self.signals = ExportSignals()
 
     @Slot()
@@ -40,6 +42,7 @@ class ExportWorker(QRunnable):
                 self.state,
                 self.destination,
                 jpeg_quality=self.jpeg_quality,
+                source_path=self.source_path,
                 **self.metadata,
             )
         except Exception:

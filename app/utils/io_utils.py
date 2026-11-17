@@ -9,6 +9,7 @@ from PIL import Image, ImageCms, ImageOps
 
 
 SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png"}
+_SRGB_PROFILE = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB"))
 
 
 @dataclass(slots=True)
@@ -38,15 +39,16 @@ def load_image(path: str | Path) -> LoadedImage:
     with Image.open(source) as opened:
         image = ImageOps.exif_transpose(opened)
         original_mode = image.mode
-        icc_profile = image.info.get("icc_profile")
         exif = image.info.get("exif")
         dpi = image.info.get("dpi")
+        # The renderer uses sRGB transfer functions. Tagged RGB images need
+        # conversion too (e.g. Display P3 / Adobe RGB), not just CMYK/LAB.
+        image = _to_srgb(image)
+        icc_profile = _SRGB_PROFILE.tobytes()
         if image.mode == "RGBA":
             background = Image.new("RGB", image.size, (24, 24, 24))
             background.paste(image, mask=image.getchannel("A"))
             image = background
-        elif image.mode != "RGB":
-            image = _to_srgb(image)
         pixels = np.asarray(image, dtype=np.uint8).copy()
 
     height, width = pixels.shape[:2]
@@ -64,18 +66,30 @@ def load_image(path: str | Path) -> LoadedImage:
 
 
 def _to_srgb(image: Image.Image) -> Image.Image:
+    has_alpha = "A" in image.getbands() or "transparency" in image.info
+    alpha = image.convert("RGBA").getchannel("A") if has_alpha else None
+    profile = image.info.get("icc_profile")
     try:
-        profile = image.info.get("icc_profile")
         if profile:
             source_profile = ImageCms.ImageCmsProfile(BytesIO(profile))
-            target_profile = ImageCms.createProfile("sRGB")
-            return ImageCms.profileToProfile(image, source_profile, target_profile, outputMode="RGB")
-    except (ImageCms.PyCMSError, OSError, TypeError):
-        pass
-    return image.convert("RGB")
+            profile_space = source_profile.profile.xcolor_space.strip()
+            input_mode = {"RGB": "RGB", "GRAY": "L", "CMYK": "CMYK", "Lab": "LAB"}.get(profile_space, image.mode)
+            color_image = image.convert(input_mode) if image.mode != input_mode else image
+            converted = ImageCms.profileToProfile(color_image, source_profile, _SRGB_PROFILE, outputMode="RGB")
+        else:
+            converted = image.convert("RGB")
+    except (ImageCms.PyCMSError, OSError, TypeError) as exc:
+        raise ValueError("无法读取照片的 ICC 色彩配置。请先将照片转换为 sRGB 后重新打开。") from exc
+    if alpha is not None:
+        converted.putalpha(alpha)
+    return converted
 
 
 def make_preview(pixels: np.ndarray, max_edge: int = 1600) -> np.ndarray:
+    if pixels.dtype != np.uint8 or pixels.ndim != 3 or pixels.shape[2] != 3:
+        raise ValueError("pixels must be an RGB uint8 image")
+    if max_edge < 1 or not pixels.shape[0] or not pixels.shape[1]:
+        raise ValueError("Preview dimensions must be positive")
     height, width = pixels.shape[:2]
     scale = min(1.0, max_edge / max(height, width))
     if scale >= 1.0:

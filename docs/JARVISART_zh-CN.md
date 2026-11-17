@@ -1,6 +1,6 @@
 # JarvisArt Local GGUF：部署、模型和连接说明
 
-本页只描述真实可验证的边界：JarvisArt 是独立项目；AI Lightroom 是一个非破坏性照片编辑器。两者不会互相打包、不会共享 API Key，也不会把官方模型权重提交到本仓库。
+JarvisArt 是独立项目；AI Lightroom 通过 localhost 连接你已有的本地运行时，将支持的调色参数应用到当前照片。代码、运行时和权重不随本应用分发。
 
 ## 1. 先确认许可证和硬件
 
@@ -41,15 +41,18 @@ AI Lightroom 的 **JarvisArt Local GGUF** 不是通用的“模型文件选择�
 
 原图不会离开电脑；本地请求不消耗云端 API 预算。未知或当前不支持的 Lightroom 参数会在应用中显示为“未支持”，不会被伪装成已应用。
 
+支持映射的操作包括现有渲染器的明暗、HSL、RGB/通道曲线、细节/降噪、暗角/颗粒、去色边、几何、校准及色彩分级。程序只解析 Lua 数据，不执行 Lua。无效响应或没有可用操作的方案不会显示为成功编辑。Adobe 专有镜头配置文件、Lens Blur、Point Color、Generative Remove 不由当前渲染器复现；原生局部蒙版还取决于独立 bridge 返回的能力。
+
 ## 4. 如何在应用中设置
 
-1. 打开 **文件 → 设置 → AI**。
+1. 打开 **文件 → 设置 → AI 服务**。
 2. Provider 选 **JarvisArt Local GGUF**。
 3. 运行模式选 **Local GGUF（主力本地推理）**，不要选 Mock；Mock 仅供开发界面和事务流程验证，软件会阻止它执行真实调色，因为它不会分析照片。
 4. **JarvisArt 根目录**填写包含 `scripts/launch_services.ps1` 的本地桥接服务目录；若没有这个启动器，应用不会猜测或篡改你的官方安装。
 5. Endpoint 保持 `http://127.0.0.1:8765`，除非你的桥接服务明确使用其他本机端口。
 6. 点击 **启动 JarvisArt**，等待状态变为 **Ready**。
-7. 打开照片后在 AI 输入框中输入要求，按 `Ctrl+Enter`。一次成功方案作为一个完整的撤回事务处理。Local GGUF 的“自动”预览质量默认为高清（最长边默认 3072 px）；可在 **文件 → 设置 → 性能与导出** 改成低清或指定 AI 发送质量。
+7. 打开照片，切换右侧 **AI 助手**页输入要求，按 `Ctrl+Enter`。请求期间禁止冲突编辑，通过校验的方案作为一个完整撤回事务应用。Local GGUF 的“自动”预览质量默认为高清（最长边默认 3072 px）；可在 **文件 → 设置 → 性能与导出**改成低清或指定 AI 发送质量。
+8. 按 `C` 打开可拖动左右对比，检查结果后继续手动或文字微调。拖动预览由性能模式决定（默认平衡 1280 px、省电 768 px、精细交互 1600 px），不会降低 AI 的独立发送尺寸。
 
 ## 5. 与 Lightroom Classic 插件共用本地服务
 
@@ -57,7 +60,7 @@ Lightroom Classic 插件可以与 AI Lightroom 共用同一个 localhost JarvisA
 
 如果 Lightroom Classic 插件已经配置为在打开 Lightroom 时自动启动 bridge，只要 `/health` 已经显示 Ready，AI Lightroom 就可以直接连接该服务；反过来，如果 bridge 由 AI Lightroom 先启动，兼容的 Lightroom 插件也可以复用同一个 endpoint。
 
-AI Lightroom 只会停止由当前 AI Lightroom 进程自己启动的服务。由 Lightroom Classic、手动脚本或其他程序启动的共享服务不会被它主动杀掉。
+退出 AI Lightroom 会保留本地服务运行，因此不会打断 Lightroom Classic 对共享 bridge 的使用。需要停止时，在 **文件 → 设置 → AI 服务**中主动点击**停止并释放显存**；该按钮只停止当前应用实例自己启动的服务。Lightroom Classic、手动脚本或其他程序拥有的服务不会被它关闭。
 
 Lightroom Classic 中插件菜单放在哪里、是否能在 Develop 界面直接调用，以及给插件绑定什么快捷键，都属于 Lightroom 插件自身的配置范围，不需要修改 AI Lightroom 的 Provider 设置。
 
@@ -109,4 +112,4 @@ Lightroom Classic 中插件菜单放在哪里、是否能在 Develop 界面直�
   <em>建议工作流：查看结果、细化提示词，再通过历史记录比较方案后决定保留。</em>
 </p>
 
-该截图用于说明 AI Lightroom 内的工作流，不表示把 Lightroom Classic 的每一个原生面板嵌入本应用。实际使用时，可先查看结果，再提交一条聚焦的后续请求，并使用历史/撤销把经过校验的方案与先前的非破坏性状态对比。
+该参考图展示较早的布局。1.1 的输入框位于右侧 **AI 助手**标签页。先查看结果，再提交一条聚焦的后续请求，用历史/撤销或左右对比检查后决定保留。

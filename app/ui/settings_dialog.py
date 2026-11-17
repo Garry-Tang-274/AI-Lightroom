@@ -8,7 +8,7 @@ from PySide6.QtCore import QThreadPool
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QGroupBox,
     QLabel, QLineEdit, QMessageBox, QPushButton, QSpinBox, QTabWidget,
-    QTextEdit, QVBoxLayout, QWidget,
+    QTextEdit, QVBoxLayout, QWidget, QScrollArea, QSizePolicy,
 )
 
 from app.ai.provider_registry import provider_registry
@@ -29,13 +29,24 @@ class SettingsDialog(QDialog):
         self._connection_worker = None
         self._jarvisart_worker = None
         self.setWindowTitle("AI Lightroom 设置")
-        self.resize(680, 610)
+        self.resize(760, 690)
+        self.setMinimumSize(620, 500)
 
         tabs = QTabWidget()
-        tabs.addTab(self._build_ai_tab(), "AI Providers")
-        tabs.addTab(self._build_ai_advanced_tab(), "AI Advanced")
-        tabs.addTab(self._build_budget_tab(), "API Cost Protection")
-        tabs.addTab(self._build_performance_tab(), "Performance & Export")
+        self.tabs = tabs
+        for page, title in ((self._build_ai_tab(), "AI 服务"), (self._build_ai_advanced_tab(), "摄影提示词"),
+                            (self._build_budget_tab(), "费用保护"), (self._build_performance_tab(), "性能与导出")):
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setWidget(page)
+            tabs.addTab(scroll, title)
+            for label in page.findChildren(QLabel):
+                label.setWordWrap(True)
+                label.setMinimumWidth(0)
+            for combo in page.findChildren(QComboBox):
+                combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+                combo.setMinimumContentsLength(12)
+        self.tabs.setUsesScrollButtons(True)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
@@ -47,6 +58,9 @@ class SettingsDialog(QDialog):
         tab = QWidget()
         layout = QVBoxLayout(tab)
         form = QFormLayout()
+        self.provider_form = form
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         self.provider = QComboBox()
         for descriptor in provider_registry.descriptors():
             self.provider.addItem(descriptor.display_name, descriptor.id)
@@ -57,6 +71,7 @@ class SettingsDialog(QDialog):
         self.api_key = QLineEdit()
         self.api_key.setEchoMode(QLineEdit.EchoMode.Password)
         self.api_key.setPlaceholderText("使用自己的 API Key；不会写入项目文件")
+        self.api_key.setClearButtonEnabled(True)
         self.model = QLineEdit()
         self.custom_name = QLineEdit()
         self.custom_name.setPlaceholderText("例如：本地 Ollama / OpenRouter / 公司网关")
@@ -71,6 +86,7 @@ class SettingsDialog(QDialog):
         self.jarvisart_mode = QComboBox()
         self.jarvisart_mode.addItem("Local GGUF（主力本地推理）", "real")
         self.jarvisart_mode.addItem("Mock Native（仅开发测试；不会分析图片）", "mock")
+        self.jarvisart_mode.currentIndexChanged.connect(self._local_mode_changed)
         self.jarvisart_status = QLabel()
         self.jarvisart_status.setWordWrap(True)
         self.jarvisart_root = QLineEdit()
@@ -82,7 +98,7 @@ class SettingsDialog(QDialog):
         self.jarvisart_stop = QPushButton("停止并释放显存")
         self.jarvisart_start.clicked.connect(lambda: self._control_jarvisart("start"))
         self.jarvisart_stop.clicked.connect(lambda: self._control_jarvisart("stop"))
-        self.reinspection = QCheckBox("AI 自动复检（默认关闭；开启时一次命令最多可能额外调用一次）")
+        self.reinspection = QCheckBox("启用自动复检（最多额外一次云端调用）")
         self.reinspection.setChecked(self.runtime.ai_reinspection)
         self.max_calls = QSpinBox()
         self.max_calls.setRange(1, 2)
@@ -107,6 +123,7 @@ class SettingsDialog(QDialog):
         form.addRow("JarvisArt Endpoint", self.jarvisart_endpoint)
         form.addRow("", self.jarvisart_auto_start)
         jarvisart_actions = QWidget()
+        self.jarvisart_actions = jarvisart_actions
         jarvisart_actions_layout = QVBoxLayout(jarvisart_actions)
         jarvisart_actions_layout.setContentsMargins(0, 0, 0, 0)
         jarvisart_actions_layout.addWidget(self.jarvisart_start)
@@ -117,8 +134,7 @@ class SettingsDialog(QDialog):
         form.addRow("支持能力", self.capability_label)
         form.addRow("", self.test_button)
         advanced = QGroupBox("Endpoint 与能力说明")
-        advanced.setCheckable(True)
-        advanced.setChecked(False)
+        self.endpoint_help = advanced
         advanced_layout = QVBoxLayout(advanced)
         advanced_layout.addWidget(QLabel("Qwen 默认使用北京 OpenAI-compatible 端点。若你的 Key 属于其他地域或工作空间，请替换为百炼控制台提供的 Base URL。Custom 仅适用于实际兼容 OpenAI Chat Completions 的服务。"))
         layout.addLayout(form)
@@ -158,7 +174,7 @@ class SettingsDialog(QDialog):
             if provider_id == self.runtime.provider:
                 config = self.runtime.provider_config
             else:
-                config = provider_registry.make_config(provider_id)
+                config = self.manager.saved_provider_config(provider_id)
             key = self.manager.provider_api_key(provider_id) if descriptor.requires_api_key else ""
         self._shown_provider_id = provider_id
         self.model.setText(config.model)
@@ -194,9 +210,7 @@ class SettingsDialog(QDialog):
                 status = "离线 Mock 测试模式：仅返回固定 fixture，不会读取、理解或分析当前照片。默认会阻止执行；仅供开发验证时手动确认。"
                 self.provider_description.setText("Mock Native 不是 JarvisArt 推理。它不会分析照片，也不会产出可用于验收的调色建议。请选择 Local GGUF 或已配置的云端 Provider。")
             else:
-                from app.ai.jarvisart.service import JarvisArtServiceManager
-                detected = JarvisArtServiceManager(config.jarvisart_root, config.jarvisart_endpoint).status()
-                status = f"{detected.state}：{detected.message}\n模型：{detected.model or 'JarvisArt-1208'}\n本地 GPU · 无云端费用 · 图片不会发送到云端"
+                status = "本地 GGUF · 不消耗云端额度。点击测试连接检查服务状态。"
                 self.provider_description.setText("JarvisArt Local GGUF 使用你已安装的本地 llama.cpp / Qwen2-VL 服务处理图片；不会上传原图，也不使用云端 AI 额度。默认高清预览，可在性能设置中调整。")
             self.jarvisart_status.setText(status)
         else:
@@ -204,7 +218,24 @@ class SettingsDialog(QDialog):
             self.jarvisart_status.setText("仅在选择 JarvisArt Local 时可用。")
         caps = config.capabilities
         self.capability_label.setText("Vision：{} · 多图：{} · JSON：{} · 图片生成：{} · 图片编辑：{}".format(*["支持" if value else "不支持" for value in (caps.supports_vision, caps.supports_multiple_images, caps.supports_structured_output, caps.supports_image_generation, caps.supports_image_editing)]))
-        self.test_button.setEnabled(descriptor.requires_api_key)
+        self.test_button.setEnabled((descriptor.requires_api_key or is_jarvisart and config.local_mode == "real") and self._connection_worker is None)
+        for field in (self.custom_name, self.custom_vision, self.custom_structured, self.custom_organization, self.custom_headers):
+            self.provider_form.setRowVisible(field, descriptor.is_custom)
+        for field in (self.jarvisart_mode, self.jarvisart_status, self.jarvisart_root, self.jarvisart_endpoint, self.jarvisart_auto_start, self.jarvisart_actions):
+            self.provider_form.setRowVisible(field, is_jarvisart)
+        self.provider_form.setRowVisible(self.api_key, descriptor.requires_api_key)
+        self.provider_form.setRowVisible(self.base_url, descriptor.capabilities.supports_custom_base_url and not is_jarvisart)
+        self.provider_form.setRowVisible(self.reinspection, descriptor.requires_api_key)
+        self.provider_form.setRowVisible(self.max_calls, descriptor.requires_api_key)
+        self.endpoint_help.setVisible(provider_id in {"qwen", "custom"})
+
+    def _local_mode_changed(self) -> None:
+        if not hasattr(self, "jarvisart_start"):
+            return
+        real = self.jarvisart_mode.currentData() == "real"
+        self.jarvisart_start.setEnabled(real and self._jarvisart_worker is None)
+        self.jarvisart_stop.setEnabled(real and self._jarvisart_worker is None)
+        self.test_button.setEnabled(real and self._connection_worker is None)
 
     def _current_config(self):
         return provider_registry.make_config(
@@ -217,11 +248,14 @@ class SettingsDialog(QDialog):
         )
 
     def _test_connection(self) -> None:
+        if self._connection_worker is not None:
+            return
         config = self._current_config()
-        if not self.api_key.text().strip():
+        descriptor = provider_registry.descriptor(config.provider_id)
+        if descriptor.requires_api_key and not self.api_key.text().strip():
             QMessageBox.warning(self, "无法测试连接", "请先填写 API Key。")
             return
-        if config.capabilities.supports_custom_base_url and not config.base_url:
+        if descriptor.requires_api_key and config.capabilities.supports_custom_base_url and not config.base_url:
             QMessageBox.warning(self, "无法测试连接", "请先填写 Base URL。")
             return
         self.test_button.setEnabled(False)
@@ -290,7 +324,7 @@ class SettingsDialog(QDialog):
         form.addRow("模式", self.budget_mode)
         form.addRow("自定义每日上限", self.custom_daily_limit)
         layout.addLayout(form)
-        layout.addWidget(QLabel("这是本地安全上限，不代表各云端服务的实时额度。连接测试是用户主动操作，也可能产生少量服务端用量。"))
+        layout.addWidget(QLabel("这是本地安全上限，不代表服务商实时剩余额度。云端连接测试也计入每日上限；失败不自动重试。"))
         layout.addStretch()
         return tab
 
@@ -300,7 +334,7 @@ class SettingsDialog(QDialog):
         self.preview_quality = QComboBox()
         self.preview_quality.addItem("自动（本地 JarvisArt GGUF 默认高清；云端默认低清）", "auto")
         self.preview_quality.addItem("低清（响应更快、云端更省流量）", "low")
-        self.preview_quality.addItem("高清（画布与 AI 视觉分析都使用更大预览）", "high")
+        self.preview_quality.addItem("高清（释放滑块后恢复精细预览）", "high")
         self.preview_quality.setCurrentIndex(max(0, self.preview_quality.findData(self.runtime.preview_quality)))
         self.preview_size = QSpinBox()
         self.preview_size.setRange(640, 2048)
@@ -321,15 +355,15 @@ class SettingsDialog(QDialog):
         self.jpeg_quality.setRange(1, 100)
         self.jpeg_quality.setValue(self.runtime.export_jpeg_quality)
         self.performance = QComboBox()
-        self.performance.addItem("省电", "battery")
-        self.performance.addItem("平衡", "balanced")
-        self.performance.addItem("性能", "performance")
+        self.performance.addItem("省电（交互预览 768 px）", "battery")
+        self.performance.addItem("平衡（交互预览 1280 px）", "balanced")
+        self.performance.addItem("精细交互（交互预览 1600 px）", "performance")
         self.performance.setCurrentIndex(max(0, self.performance.findData(self.runtime.performance_mode)))
         form.addRow("预览质量", self.preview_quality)
         form.addRow("低清最长边", self.preview_size)
         form.addRow("高清最长边", self.high_preview_size)
         form.addRow("发送给 AI 的图像质量", self.ai_preview_quality)
-        form.addRow("说明", QLabel("高清模式会重建更大的工作预览；需要视觉分析时，AI 收到同等质量的 JPEG 预览。增量文字指令可能不发送图片，以节省云端调用。"))
+        form.addRow("说明", QLabel("拖动时使用快速预览，松手后恢复所选清晰度。AI 图像质量独立设置；导出始终使用原始尺寸。"))
         form.addRow("默认 JPEG 质量", self.jpeg_quality)
         form.addRow("性能模式", self.performance)
         form.addRow("硬件", QLabel(f"CPU 逻辑线程：{psutil.cpu_count(logical=True) or '未知'}\nAI 请求在后台执行"))
@@ -354,11 +388,14 @@ class SettingsDialog(QDialog):
             export_jpeg_quality=self.jpeg_quality.value(), performance_mode=self.performance.currentData(),
         )
         try:
+            for draft, key in self._drafts.values():
+                if draft.provider_id != config.provider_id:
+                    self.manager.save_provider_config(draft, key)
             self.manager.save(runtime, api_key)
             self.manager.store.setValue("ai/budget_mode", self.budget_mode.currentData())
             self.manager.store.setValue("ai/custom_daily_limit", self.custom_daily_limit.value())
             self.manager.store.sync()
-        except RuntimeError as exc:
+        except (RuntimeError, ValueError) as exc:
             QMessageBox.critical(self, "无法保存设置", str(exc))
             return
         self.accept()
