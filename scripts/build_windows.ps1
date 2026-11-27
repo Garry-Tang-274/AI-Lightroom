@@ -11,8 +11,14 @@ Push-Location -LiteralPath $ProjectRoot
 try {
 & $Python (Join-Path $ProjectRoot "build_tools\create_icon.py")
 if ($LASTEXITCODE -ne 0) { throw "Icon build failed." }
-& $Python -m pytest -q (Join-Path $ProjectRoot "tests")
-if ($LASTEXITCODE -ne 0) { throw "Tests failed. No release will be built." }
+$OriginalQtPlatform = $env:QT_QPA_PLATFORM
+try {
+    $env:QT_QPA_PLATFORM = "offscreen"
+    & $Python -m pytest -q (Join-Path $ProjectRoot "tests")
+    if ($LASTEXITCODE -ne 0) { throw "Tests failed. No release will be built." }
+} finally {
+    $env:QT_QPA_PLATFORM = $OriginalQtPlatform
+}
 & $Python -m PyInstaller --noconfirm --clean (Join-Path $ProjectRoot "ai_lightroom.spec")
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller build failed." }
 

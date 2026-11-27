@@ -23,6 +23,7 @@ class LoadedImage:
     icc_profile: bytes | None = None
     exif: bytes | None = None
     dpi: tuple[float, float] | None = None
+    modified_ns: int | None = None
 
     @property
     def description(self) -> str:
@@ -36,6 +37,7 @@ def load_image(path: str | Path) -> LoadedImage:
     if source.suffix.lower() not in SUPPORTED_EXTENSIONS:
         raise ValueError("当前版本仅支持 JPG 和 PNG 图片。")
 
+    stat = source.stat()
     with Image.open(source) as opened:
         image = ImageOps.exif_transpose(opened)
         original_mode = image.mode
@@ -58,10 +60,11 @@ def load_image(path: str | Path) -> LoadedImage:
         width=width,
         height=height,
         mode=original_mode,
-        file_size=source.stat().st_size,
+        file_size=stat.st_size,
         icc_profile=icc_profile,
         exif=exif,
         dpi=dpi,
+        modified_ns=stat.st_mtime_ns,
     )
 
 

@@ -42,6 +42,7 @@ from app.ui.export_worker import ExportWorker
 from app.core.editor_state import (
     BrushPoint,
     BrushStroke,
+    ColorGrading,
     ColorWheel,
     EditorState,
     HSLAdjustment,
@@ -51,9 +52,11 @@ from app.core.editor_state import (
     WatermarkLayer,
 )
 from app.core.history import HistoryManager
-from app.utils.io_utils import LoadedImage, load_image, make_preview
+from app.core.recipes import RecipeLibrary
+from app.utils.io_utils import LoadedImage, SUPPORTED_EXTENSIONS, load_image, make_preview
 from app.utils.config import SettingsManager
 from app.ai.errors import AIRequestError
+from app.ai.progress import AIProgress
 from app.ai.usage import AIUsageManager
 from app.ai.provider_registry import provider_registry
 from app.core.watermarks import WatermarkLibrary
@@ -79,6 +82,12 @@ class MainWindow(QMainWindow):
         self.usage_manager = AIUsageManager(self.settings)
         self.watermark_library = WatermarkLibrary(self.settings)
         self.session_store = SessionStore(self.settings)
+        self.recipes = RecipeLibrary(self.settings)
+        self.photo_set: tuple[Path, ...] = ()
+        self._photo_index = -1
+        self._visited_photos: set[Path] = set()
+        self._pending_selection = None
+        self._session_write_failed = False
         self.loaded_image: LoadedImage | None = None
         self.state = EditorState()
         self.history = HistoryManager()
@@ -135,6 +144,13 @@ class MainWindow(QMainWindow):
         self.open_action = QAction("打开图片…", self)
         self.open_action.setShortcut(QKeySequence.StandardKey.Open)
         self.open_action.triggered.connect(self.open_image_dialog)
+        self.open_action.setToolTip("打开一张或多张 JPG / PNG（Ctrl+O）")
+        self.previous_photo = QAction("上一张", self)
+        self.previous_photo.setShortcut(QKeySequence("Alt+Left"))
+        self.previous_photo.triggered.connect(lambda: self._navigate_set(self._photo_index - 1))
+        self.next_photo = QAction("下一张", self)
+        self.next_photo.setShortcut(QKeySequence("Alt+Right"))
+        self.next_photo.triggered.connect(lambda: self._navigate_set(self._photo_index + 1))
         self.export_action = QAction("导出…", self)
         self.export_action.setShortcut(QKeySequence.StandardKey.Save)
         self.export_action.setEnabled(False)
@@ -208,6 +224,8 @@ class MainWindow(QMainWindow):
         file_menu.addAction(self.export_as_action)
         self.recent_menu = file_menu.addMenu("最近文件")
         self._refresh_recent_menu()
+        file_menu.addAction(self.previous_photo)
+        file_menu.addAction(self.next_photo)
         file_menu.addSeparator()
         file_menu.addAction(self.settings_action)
         file_menu.addSeparator()
@@ -218,6 +236,8 @@ class MainWindow(QMainWindow):
         edit_menu.addSeparator()
         edit_menu.addAction(self.copy_adjustments_action)
         edit_menu.addAction(self.paste_adjustments_action)
+        self.recipe_menu = edit_menu.addMenu("调色配方")
+        self.recipe_menu.aboutToShow.connect(self._populate_recipes)
         edit_menu.addSeparator()
         edit_menu.addAction(self.reset_action)
         view_menu = self.menuBar().addMenu("视图")
@@ -262,6 +282,12 @@ class MainWindow(QMainWindow):
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         toolbar.addWidget(spacer)
+        self.recipe_button = QToolButton()
+        self.recipe_button.setText("配方")
+        self.recipe_button.setToolTip("保存当前调色，或将已有配方应用到这张照片")
+        self.recipe_button.setMenu(self.recipe_menu)
+        self.recipe_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        toolbar.addWidget(self.recipe_button)
         toolbar.addAction(self.settings_action)
         toolbar.widgetForAction(self.export_action).setObjectName("accentButton")
         self.addToolBar(toolbar)
@@ -353,6 +379,25 @@ class MainWindow(QMainWindow):
         self.zoom_label.setToolTip("百分比相对工作预览；导出始终为原始尺寸。")
         self.image_view.zoom_changed.connect(lambda zoom: self.zoom_label.setText(f"{zoom:.0%} · 预览"))
         header_layout.addWidget(self.photo_label, 1)
+        self.set_nav = QWidget()
+        nav = QHBoxLayout(self.set_nav)
+        nav.setContentsMargins(0, 0, 0, 0)
+        nav.setSpacing(2)
+        for action in (self.previous_photo, self.next_photo):
+            button = QToolButton()
+            button.setDefaultAction(action)
+            button.setArrowType(Qt.ArrowType.LeftArrow if action == self.previous_photo else Qt.ArrowType.RightArrow)
+            button.setToolTip("上一张（Alt+←）" if action == self.previous_photo else "下一张（Alt+→）")
+            nav.addWidget(button)
+        self.set_picker = QToolButton()
+        self.set_picker.setAccessibleName("照片组：跳转到照片")
+        self.set_picker.setToolTip("查看组内照片，点击文件名可直接跳转")
+        self.set_menu = QMenu(self.set_picker)
+        self.set_menu.aboutToShow.connect(self._populate_photo_set)
+        self.set_picker.setMenu(self.set_menu)
+        self.set_picker.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        nav.insertWidget(1, self.set_picker)
+        header_layout.addWidget(self.set_nav)
         header_layout.addWidget(self.zoom_label)
         canvas_layout.addWidget(canvas_header)
         canvas_layout.addWidget(self.image_view, 1)
@@ -402,6 +447,12 @@ class MainWindow(QMainWindow):
         self.watermark_panel.setEnabled(editable)
         self.history_list.setEnabled(editable)
         self.open_action.setEnabled(self._ai_worker is None)
+        self.recipe_button.setEnabled(editable)
+        self.recipe_menu.setEnabled(editable)
+        self.set_nav.setVisible(len(self.photo_set) > 1)
+        self.set_picker.setEnabled(editable)
+        self.previous_photo.setEnabled(editable and self._photo_index > 0)
+        self.next_photo.setEnabled(editable and self._photo_index + 1 < len(self.photo_set))
         self.settings_action.setEnabled(self._ai_worker is None and not self._loading)
         for action in (self.reset_action, self.copy_adjustments_action):
             action.setEnabled(editable)
@@ -416,15 +467,40 @@ class MainWindow(QMainWindow):
         self.ai_panel.set_ready(ready and not self._loading)
 
     def open_image_async(self, filename: str) -> None:
+        self.open_photo_set([filename])
+
+    def open_photo_set(self, filenames) -> None:
+        paths = tuple(dict.fromkeys(Path(name).absolute() for name in filenames))
+        if paths:
+            self._start_photo_load(paths, 0, new_set=True)
+
+    def _navigate_set(self, index: int) -> None:
+        if not self._loading and 0 <= index < len(self.photo_set) and index != self._photo_index:
+            self._start_photo_load(self.photo_set, index, new_set=False)
+
+    def _populate_photo_set(self) -> None:
+        self.set_menu.clear()
+        for index, path in enumerate(self.photo_set):
+            action = self.set_menu.addAction(f"{index + 1}   {path.name.replace('&', '&&')}")
+            action.setToolTip(str(path))
+            action.setCheckable(True)
+            action.setChecked(index == self._photo_index)
+            action.triggered.connect(lambda _checked=False, i=index: self._navigate_set(i))
+
+    def _start_photo_load(self, paths: tuple[Path, ...], index: int, *, new_set: bool) -> None:
         if self._ai_worker is not None:
             self.statusBar().showMessage("请先等待 AI 完成，或取消当前请求。", 5000)
             return
-        self._load_generation += 1
-        self._loading = True
         self._flush_history()
+        if self._session_write_failed and not self._save_session():
+            self.statusBar().showMessage("当前编辑未能保存，已保留照片。请先导出，或恢复本机设置的写入权限。")
+            return
+        self._load_generation += 1
+        self._pending_selection = (paths, index, new_set)
+        self._loading = True
         self._sync_actions()
-        self.statusBar().showMessage("正在读取照片…")
-        worker = ImageLoadWorker(filename, self.runtime_settings.active_preview_size, self._load_generation)
+        self.statusBar().showMessage(f"正在读取 {paths[index].name}…")
+        worker = ImageLoadWorker(str(paths[index]), self.runtime_settings.active_preview_size, self._load_generation)
         worker.signals.finished.connect(self._image_loaded)
         worker.signals.failed.connect(self._image_load_failed)
         self._task_pool.start(worker)
@@ -433,28 +509,47 @@ class MainWindow(QMainWindow):
         if request_id != self._load_generation:
             return
         self._loading = False
-        self._install_loaded_image(loaded, preview)
+        paths, index, new_set = self._pending_selection
+        self._pending_selection = None
+        if self._close_when_idle:
+            self._finish_pending_close()
+            return
+        resume = not new_set and paths[index] in self._visited_photos
+        if new_set:
+            self._visited_photos.clear()
+        self.photo_set, self._photo_index = paths, index
+        self.set_picker.setText(f"{index + 1} / {len(paths)}")
+        self._visited_photos.add(paths[index])
+        self._install_loaded_image(loaded, preview, resume=resume)
+        if new_set and index:
+            self.statusBar().showMessage(f"开头 {index} 张照片未能读取；已打开 {loaded.path.name}。", 8000)
         self._sync_actions()
         self._finish_pending_close()
 
     def _image_load_failed(self, message: str, request_id: int) -> None:
         if request_id != self._load_generation:
             return
+        paths, index, new_set = self._pending_selection
+        self._pending_selection = None
+        if new_set and not self._close_when_idle and index + 1 < len(paths):
+            self._start_photo_load(paths, index + 1, new_set=True)
+            return
         self._loading = False
         self._sync_actions()
-        QMessageBox.critical(self, "无法打开图片", message)
+        if not self._close_when_idle:
+            QMessageBox.critical(self, "无法打开图片", message)
         self._finish_pending_close()
 
     def open_image_dialog(self) -> None:
         start = self.settings.value("last_open_dir", str(Path.home()))
-        filename, _ = QFileDialog.getOpenFileName(
+        filenames, _ = QFileDialog.getOpenFileNames(
             self,
-            "打开图片",
+            "打开照片（可多选）",
             start,
             "图片 (*.jpg *.jpeg *.png);;所有文件 (*)",
         )
-        if filename:
-            self.open_image_async(filename)
+        if filenames:
+            self.open_photo_set(filenames)
 
     def open_image(self, filename: str) -> None:
         """Synchronous API retained for integrations; interactive entrypoints use a worker."""
@@ -468,9 +563,12 @@ class MainWindow(QMainWindow):
             return
         self._load_generation += 1
         self._loading = False
+        self._pending_selection = None
+        self.photo_set, self._photo_index = (loaded.path.absolute(),), 0
+        self._visited_photos = set(self.photo_set)
         self._install_loaded_image(loaded, preview)
 
-    def _install_loaded_image(self, loaded, preview) -> None:
+    def _install_loaded_image(self, loaded, preview, *, resume: bool = False) -> None:
         self._flush_history()
         self._document_generation += 1
         self._render_generation += 1
@@ -486,11 +584,12 @@ class MainWindow(QMainWindow):
         self.image_view.clear_image()
         self.image_view._fit_on_resize = True
         self.loaded_image = loaded
+        self.session_store.bind(loaded.path, loaded.file_size, loaded.modified_ns)
         self.state = EditorState()
         self.history.reset(self.state, f"打开：{loaded.path.name}")
         recovered = self.session_store.load(loaded.path)
         if recovered and recovered.get("state"):
-            answer = QMessageBox.question(
+            answer = QMessageBox.StandardButton.Yes if resume else QMessageBox.question(
                 self, "恢复编辑", "发现这张照片的已保存编辑。是否恢复？",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.Yes,
@@ -580,18 +679,19 @@ class MainWindow(QMainWindow):
 
     def dragEnterEvent(self, event) -> None:  # noqa: N802
         urls = event.mimeData().urls() if event.mimeData().hasUrls() else []
-        if any(url.isLocalFile() and Path(url.toLocalFile()).suffix.lower() in {".jpg", ".jpeg", ".png"} for url in urls):
+        if any(url.isLocalFile() and Path(url.toLocalFile()).suffix.lower() in SUPPORTED_EXTENSIONS for url in urls):
             event.acceptProposedAction()
         else:
             event.ignore()
 
     def dropEvent(self, event) -> None:  # noqa: N802
-        for url in event.mimeData().urls():
-            if url.isLocalFile() and Path(url.toLocalFile()).suffix.lower() in {".jpg", ".jpeg", ".png"}:
-                self.open_image_async(url.toLocalFile())
-                event.acceptProposedAction()
-                return
-        event.ignore()
+        paths = [url.toLocalFile() for url in event.mimeData().urls()
+                 if url.isLocalFile() and Path(url.toLocalFile()).suffix.lower() in SUPPORTED_EXTENSIONS]
+        if paths and self._ai_worker is None:
+            self.open_photo_set(paths)
+            event.acceptProposedAction()
+        else:
+            event.ignore()
 
     def _recent_files(self) -> list[str]:
         stored = self.settings.value("recent_files", [])
@@ -659,7 +759,10 @@ class MainWindow(QMainWindow):
             return
         try:
             values = getattr(self.state, section)
-            setattr(self.state, section, values.with_value(key, value))
+            if section == "color_grading" and key in {"blending", "balance"}:
+                self.state.color_grading = ColorGrading.model_validate({**values.model_dump(), key: value})
+            else:
+                setattr(self.state, section, values.with_value(key, value))
         except (AttributeError, KeyError, ValueError):
             return
         self._queue_preview_render()
@@ -751,7 +854,6 @@ class MainWindow(QMainWindow):
             return
         layer.adjustments = layer.adjustments.with_value(key, value)
         self._queue_preview_render()
-        self._update_mask_overlay()
         self._schedule_history(f"局部调整：{layer.name}")
 
     def _set_mask_property(self, mask_id: str, key: str, value) -> None:
@@ -918,8 +1020,15 @@ class MainWindow(QMainWindow):
     def _history_row_selected(self, row: int) -> None:
         if row < 0 or row == self.history.cursor or self.preview_source is None:
             return
-        self._history_timer.stop()
-        state = self.history.restore(row)
+        entries = self.history.entries
+        if row >= len(entries):
+            return
+        requested = entries[row]
+        # A numeric edit can still be inside its merge interval. Preserve it as
+        # a redo step before jumping, even if adding it trims the history.
+        self._flush_history()
+        index = next((i for i, entry in enumerate(self.history.entries) if entry is requested), -1)
+        state = self.history.restore(index)
         if state is not None:
             self._restore_state(state)
 
@@ -948,14 +1057,17 @@ class MainWindow(QMainWindow):
         if self.loaded_image is not None:
             self._save_session()
 
-    def _save_session(self) -> None:
+    def _save_session(self) -> bool:
         if self.loaded_image is None:
-            return
+            return True
         try:
             self.session_store.save(self.loaded_image.path, self.state, self.history)
+            self._session_write_failed = False
         except (OSError, ValueError):
+            self._session_write_failed = True
             logging.getLogger(__name__).exception("Could not save edit session")
             self.statusBar().showMessage("编辑仍在内存中，但自动保存失败；请导出成片。", 7000)
+        return not self._session_write_failed
 
     def closeEvent(self, event) -> None:  # noqa: N802
         if self._ai_worker is not None or self._export_worker is not None or self._loading:
@@ -1002,8 +1114,8 @@ class MainWindow(QMainWindow):
         path = Path(filename)
         if not path.suffix:
             path = path.with_suffix(".png" if selected.startswith("PNG") else ".jpg")
-        if path.resolve() == self.loaded_image.path.resolve():
-            QMessageBox.warning(self, "请保留原图", "导出不能覆盖当前原始照片。请选择其他文件名。")
+        if self._is_source_photo(path):
+            QMessageBox.warning(self, "请保留原图", "导出不能覆盖当前照片或组内其他原图。请选择其他文件名。")
             return
         quality = self.runtime_settings.export_jpeg_quality
         if path.suffix.lower() in {".jpg", ".jpeg"}:
@@ -1015,7 +1127,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("正在以原始分辨率导出…")
         metadata = {
             "icc_profile": self.loaded_image.icc_profile,
-            "exif": self.loaded_image.exif,
+            "exif": self.loaded_image.exif if self.runtime_settings.export_keep_exif else None,
             "dpi": self.loaded_image.dpi,
         }
         worker = ExportWorker(self.loaded_image.pixels, self.state, str(path), quality, metadata, source_path=self.loaded_image.path)
@@ -1023,6 +1135,15 @@ class MainWindow(QMainWindow):
         worker.signals.finished.connect(self._export_finished)
         worker.signals.failed.connect(self._export_failed)
         self._task_pool.start(worker)
+
+    def _is_source_photo(self, path: Path) -> bool:
+        target = path.resolve()
+        sources = self.photo_set or (self.loaded_image.path,)
+        if target in sources:
+            return True
+        if not target.exists():
+            return False
+        return any(source.exists() and target.samefile(source) for source in sources)
 
     def _export_finished(self, filename: str) -> None:
         self.export_action.setEnabled(True)
@@ -1122,6 +1243,68 @@ class MainWindow(QMainWindow):
         else:
             self._show_before()
 
+    def _populate_recipes(self) -> None:
+        menu = self.recipe_menu
+        menu.clear()
+        try:
+            names = self.recipes.names()
+        except (ValueError, OSError):
+            menu.addAction("无法读取本机配方库").setEnabled(False)
+            return
+        menu.addAction("将当前调色存为配方…", self._save_recipe)
+        menu.addSeparator()
+        if names:
+            for name in names:
+                menu.addAction(name.replace("&", "&&"), lambda _checked=False, n=name: self._apply_recipe(n))
+            menu.addSeparator()
+            submenu = menu.addMenu("删除配方")
+            for name in names:
+                submenu.addAction(name.replace("&", "&&"), lambda _checked=False, n=name: self._delete_recipe(n))
+        else:
+            menu.addAction("尚无已保存的配方").setEnabled(False)
+
+    def _save_recipe(self) -> None:
+        name, ok = QInputDialog.getText(self, "保存调色配方",
+            "名称（保留色调与细节，不复制光学、几何、蒙版或水印）：")
+        if not ok or not name.strip():
+            return
+        name = name.strip()
+        try:
+            replace = name in self.recipes.names()
+            if replace and QMessageBox.question(self, "替换配方", f"要替换已有配方「{name}」吗？",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No
+                    ) != QMessageBox.StandardButton.Yes:
+                return
+            self.recipes.save(name, self.state, replace=replace)
+            self.statusBar().showMessage(f"已保存配方「{name}」，切换照片后可继续使用。", 6000)
+        except (ValueError, OSError) as exc:
+            QMessageBox.warning(self, "无法保存配方", str(exc))
+
+    def _apply_recipe(self, name: str) -> None:
+        if self.loaded_image is None or self._ai_worker is not None or self._loading:
+            return
+        try:
+            after = self.recipes.apply(name, self.state)
+        except (ValueError, OSError, KeyError) as exc:
+            QMessageBox.warning(self, "无法应用配方", str(exc))
+            return
+        if after == self.state:
+            self.statusBar().showMessage(f"当前调色已与「{name}」一致。", 4000)
+            return
+        self._flush_history()
+        self.history.push(after, f"配方：{name}")
+        self._restore_state(after)
+        self.statusBar().showMessage(f"已应用「{name}」· 可撤销", 5000)
+
+    def _delete_recipe(self, name: str) -> None:
+        if QMessageBox.question(self, "删除配方", f"删除「{name}」？已编辑的照片不会改变。",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
+            try:
+                self.recipes.remove(name)
+            except (KeyError, ValueError, OSError) as exc:
+                QMessageBox.warning(self, "无法删除配方", str(exc))
+
     def copy_adjustments(self) -> None:
         if self.preview_source is None:
             return
@@ -1194,7 +1377,7 @@ class MainWindow(QMainWindow):
             self.ai_panel.add_assistant_message("已达到 AI Lightroom 设置的每日云端调用上限。为了防止意外费用，云端 AI 已暂停。")
             self._refresh_ai_status()
             return
-        history_summary = [entry.label for entry in self.history.entries[-8:]]
+        history_summary = [entry.label for entry in self.history.entries[:self.history.cursor + 1][-8:]]
         worker = AIEditWorker(
             prompt,
             self.loaded_image.pixels if self.loaded_image is not None else self.preview_source,
@@ -1207,6 +1390,7 @@ class MainWindow(QMainWindow):
         self._ai_worker = worker
         self._ai_before_state = self.state.snapshot()
         self._ai_document = self._document_generation
+        worker.signals.progress.connect(self._ai_progress)
         worker.signals.finished.connect(self._ai_finished)
         worker.signals.failed.connect(self._ai_failed)
         self.ai_panel.set_busy(True)
@@ -1255,7 +1439,28 @@ class MainWindow(QMainWindow):
         if box.clickedButton() is settings_button:
             self.open_settings()
 
+    def _ai_progress(self, progress) -> None:
+        worker = self._ai_worker
+        if worker is not None and self.sender() is worker.signals and self._ai_document == self._document_generation:
+            self.ai_panel.set_progress(progress)
+
+    def _finish_cancelled_ai(self, message: str) -> None:
+        self._ai_worker = None
+        self.ai_panel.set_progress(AIProgress("cancelled", "已取消，本次结果未应用。"))
+        self.ai_panel.set_busy(False)
+        self.ai_panel.set_retry_available(False)
+        self.ai_panel.set_details_available(False)
+        self.ai_panel.add_assistant_message(message)
+        self._ai_details = ""
+        self._last_ai_error = None
+        self._sync_actions()
+        self.statusBar().showMessage("AI 编辑已取消，照片保持不变。", 6000)
+        self._finish_pending_close()
+
     def _ai_finished(self, result) -> None:
+        if getattr(self._ai_worker, "is_cancelled", False):
+            self._finish_cancelled_ai("结果已返回，但你已取消，本次没有应用调整。")
+            return
         self._ai_worker = None
         self.ai_panel.set_busy(False)
         if self._ai_document != self._document_generation or self._ai_before_state != self.state or self._close_when_idle:
@@ -1280,7 +1485,6 @@ class MainWindow(QMainWindow):
                 self.histogram.set_image(pixels)
         if pixels is None or pixels.shape != self.preview_source.shape:
             self._start_preview_render()
-        self.ai_panel.set_busy(False)
         self.ai_panel.set_result_info(result.provider_name, True)
         self._refresh_ai_status(result.provider_name)
         self.ai_panel.add_assistant_message(result.final_plan.summary if getattr(result, "has_changes", True) else "方案未改变当前调整。可换一个更具体的要求，或直接手动调整。")
@@ -1308,6 +1512,11 @@ class MainWindow(QMainWindow):
         self._finish_pending_close()
 
     def _ai_failed(self, traceback_text: str) -> None:
+        if getattr(self._ai_worker, "is_cancelled", False):
+            message = (traceback_text.message if isinstance(traceback_text, AIRequestError)
+                       and traceback_text.category == "已取消本地等待" else "已取消本次编辑，照片保持不变。")
+            self._finish_cancelled_ai(message)
+            return
         self._ai_worker = None
         self.ai_panel.set_busy(False)
         error = traceback_text if isinstance(traceback_text, AIRequestError) else AIRequestError(
@@ -1360,7 +1569,6 @@ class MainWindow(QMainWindow):
     def _cancel_ai_request(self) -> None:
         if self._ai_worker is not None:
             self._ai_worker.cancel()
-            self.ai_panel.add_assistant_message("已请求取消本地等待；已经发出的云端请求可能仍计入调用。")
             self.statusBar().showMessage("正在等待当前 AI 请求安全结束…", 5000)
 
     def _retry_ai_request(self) -> None:

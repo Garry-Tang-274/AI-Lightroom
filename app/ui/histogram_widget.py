@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import numpy as np
-from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
-from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen
+from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtWidgets import QToolButton, QVBoxLayout, QWidget
 
 
@@ -35,10 +35,11 @@ class HistogramWidget(QWidget):
     def set_image(self, pixels: np.ndarray | None) -> None:
         if pixels is None or pixels.size == 0:
             self._histograms = []
+            self._clip_high = self._clip_low = 0.0
             self.caption.setText("RGB 直方图")
             self.update()
             return
-        sample = pixels[::max(1, pixels.shape[0] // 240), ::max(1, pixels.shape[1] // 360)]
+        sample = pixels[::max(1, (pixels.shape[0] + 239) // 240), ::max(1, (pixels.shape[1] + 359) // 360)]
         self._histograms = [np.bincount(sample[..., channel].ravel(), minlength=256).astype(float) for channel in range(3)]
         self._clip_high = float((sample == 255).any(axis=2).mean() * 100)
         self._clip_low = float((sample == 0).all(axis=2).mean() * 100)
@@ -47,11 +48,19 @@ class HistogramWidget(QWidget):
 
     def paintEvent(self, event) -> None:  # noqa: N802
         super().paintEvent(event)
-        if not self._histograms or not self.caption.isChecked():
+        if not self.caption.isChecked():
             return
         painter = QPainter(self)
-        area = self.contentsRect().adjusted(12, 38, -12, -10)
+        area = QRectF(self.contentsRect().adjusted(12, 35, -12, -25))
         painter.fillRect(area, QColor("#151719"))
+        if not self._histograms:
+            painter.setPen(QColor("#95a4b3"))
+            painter.drawText(area, Qt.AlignmentFlag.AlignCenter, "打开照片后显示色调分布")
+            return
+        painter.setPen(QPen(QColor("#2e3740"), 1))
+        for fraction in (.25, .5, .75):
+            x = area.left() + area.width() * fraction
+            painter.drawLine(QPointF(x, area.top()), QPointF(x, area.bottom()))
         maximum = max(1.0, max(hist.max() for hist in self._histograms))
         for histogram, color in zip(self._histograms, (QColor(230, 90, 90, 175), QColor(95, 195, 120, 175), QColor(95, 145, 235, 175))):
             path = QPainterPath()
@@ -69,3 +78,7 @@ class HistogramWidget(QWidget):
             path.closeSubpath()
             color.setAlpha(38)
             painter.fillPath(path, color)
+        painter.setPen(QColor("#95a4b3"))
+        painter.setFont(QFont("Microsoft YaHei UI", 8))
+        for text, alignment in (("暗部", Qt.AlignmentFlag.AlignLeft), ("中间调", Qt.AlignmentFlag.AlignHCenter), ("高光", Qt.AlignmentFlag.AlignRight)):
+            painter.drawText(QRectF(area.left(), area.bottom() + 3, area.width(), 20), alignment | Qt.AlignmentFlag.AlignVCenter, text)

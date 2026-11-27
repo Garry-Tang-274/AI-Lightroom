@@ -46,6 +46,7 @@ class RuntimeSettings:
     system_prompt: str = DEFAULT_SYSTEM_PROMPT
     export_jpeg_quality: int = 92
     performance_mode: str = "balanced"
+    export_keep_exif: bool = True
 
     @property
     def worker_threads(self) -> int:
@@ -142,6 +143,7 @@ class SettingsManager:
             max_vision_calls=_bounded_int(self.store.value("ai/max_vision_calls", 2), 1, 2, 2),
             system_prompt=str(self.store.value("ai/system_prompt", DEFAULT_SYSTEM_PROMPT) or DEFAULT_SYSTEM_PROMPT),
             export_jpeg_quality=_bounded_int(self.store.value("export/jpeg_quality", 92), 1, 100, 92),
+            export_keep_exif=_as_bool(self.store.value("export/keep_exif", True)),
             performance_mode=str(self.store.value("performance/mode", "balanced")),
         )
 
@@ -191,6 +193,7 @@ class SettingsManager:
         self.store.setValue("ai/max_vision_calls", settings.max_vision_calls)
         self.store.setValue("ai/system_prompt", settings.system_prompt)
         self.store.setValue("export/jpeg_quality", settings.export_jpeg_quality)
+        self.store.setValue("export/keep_exif", settings.export_keep_exif)
         self.store.setValue("performance/mode", settings.performance_mode)
         self.store.sync()
 

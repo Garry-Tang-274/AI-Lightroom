@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPainterPath, QPen, QPixmap
-from PySide6.QtWidgets import QGraphicsPathItem, QGraphicsPixmapItem, QGraphicsScene, QGraphicsView
+from PySide6.QtWidgets import QGraphicsPathItem, QGraphicsPixmapItem, QGraphicsScene, QGraphicsView, QPushButton
 
 
 class ImageView(QGraphicsView):
@@ -39,6 +39,13 @@ class ImageView(QGraphicsView):
         self._comparison_enabled = False
         self._split_fraction = 0.5
         self._dragging_split = False
+        self.open_button = QPushButton("打开照片", self.viewport())
+        self.open_button.setObjectName("canvasOpenButton")
+        self.open_button.setToolTip("打开 JPG / PNG 照片 · Ctrl+O")
+        self.open_button.setAccessibleName("打开照片")
+        self.open_button.setFixedSize(156, 40)
+        self.open_button.clicked.connect(self.open_requested)
+        self._position_open_button()
 
     def set_image(self, pixels: np.ndarray, logical_size: tuple[int, int] | None = None) -> None:
         contiguous = np.ascontiguousarray(pixels)
@@ -52,6 +59,7 @@ class ImageView(QGraphicsView):
         self._pixmap_item.setScale(self._logical_size[0] / width)
         self._scene.setSceneRect(QRectF(0, 0, *self._logical_size))
         self._has_image = True
+        self.open_button.hide()
         if self._fit_on_resize and old_size != self._logical_size:
             self.fit_to_view()
         self.viewport().update()
@@ -62,6 +70,9 @@ class ImageView(QGraphicsView):
         self._has_image = False
         self._logical_size = None
         self._comparison_pixmap = QPixmap()
+        self._comparison_enabled = False
+        self.open_button.show()
+        self._position_open_button()
         self.viewport().update()
 
     def set_comparison(self, original: np.ndarray | None, enabled: bool) -> None:
@@ -79,11 +90,11 @@ class ImageView(QGraphicsView):
             painter.resetTransform()
             area = self.viewport().rect()
             painter.setPen(QColor("#e0ebf4"))
-            painter.setFont(QFont("Microsoft YaHei UI", 22))
-            painter.drawText(area.adjusted(12, -60, -12, -60), Qt.AlignmentFlag.AlignCenter, "让照片成为主角")
+            painter.setFont(QFont("Microsoft YaHei UI", 22 if area.width() >= 400 else 17))
+            painter.drawText(QRectF(12, area.height() / 2 - 104, area.width() - 24, 44), Qt.AlignmentFlag.AlignCenter, "让照片成为主角")
             painter.setPen(QColor("#93a4b5"))
-            painter.setFont(QFont("Microsoft YaHei UI", 11))
-            painter.drawText(area.adjusted(12, 40, -12, 40), Qt.AlignmentFlag.AlignCenter, "拖入 JPG / PNG，或按 Ctrl+O 打开\n手动调色 · 本地 AI · 全尺寸导出")
+            painter.setFont(QFont("Microsoft YaHei UI", 10))
+            painter.drawText(QRectF(12, area.height() / 2 - 48, area.width() - 24, 62), Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap, "拖入 JPG / PNG，或按 Ctrl+O\n原图保留，所有调整均可撤回")
             painter.restore()
         elif self._comparison_enabled and not self._comparison_pixmap.isNull():
             bounds = self._scene.sceneRect()
@@ -137,7 +148,11 @@ class ImageView(QGraphicsView):
     def wheelEvent(self, event) -> None:  # noqa: N802 - Qt API
         if not self._has_image:
             return super().wheelEvent(event)
-        factor = 1.2 if event.angleDelta().y() > 0 else 1 / 1.2
+        delta = event.angleDelta().y() or event.pixelDelta().y()
+        if not delta:
+            event.ignore()
+            return
+        factor = 1.2 if delta > 0 else 1 / 1.2
         current = self.transform().m11()
         next_zoom = current * factor
         if 0.03 <= next_zoom <= 16:
@@ -245,5 +260,10 @@ class ImageView(QGraphicsView):
 
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt API
         super().resizeEvent(event)
+        self._position_open_button()
         if self._fit_on_resize and self._has_image:
             self.fit_to_view()
+
+    def _position_open_button(self) -> None:
+        self.open_button.move(max(0, (self.viewport().width() - self.open_button.width()) // 2),
+                              max(0, self.viewport().height() // 2 + 32))

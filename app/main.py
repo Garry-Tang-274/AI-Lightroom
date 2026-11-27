@@ -52,7 +52,7 @@ def create_application(argv: list[str] | None = None) -> QApplication:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="AI Lightroom photo editor")
-    parser.add_argument("photo", nargs="?", help="JPG or PNG to open")
+    parser.add_argument("photos", nargs="*", help="One or more JPG / PNG photos to open")
     parser.add_argument("--package-self-check", action="store_true")
     parser.add_argument("--smoke-test", nargs="?", const="ai-lightroom-smoke.png")
     args = parser.parse_args()
@@ -67,8 +67,8 @@ def main() -> int:
         # taking focus from another application during background validation.
         window.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
     window.show()
-    if args.photo:
-        QTimer.singleShot(0, lambda: window.open_image_async(args.photo))
+    if args.photos:
+        QTimer.singleShot(0, lambda: window.open_photo_set(args.photos))
     if args.smoke_test:
         screenshot = args.smoke_test
 

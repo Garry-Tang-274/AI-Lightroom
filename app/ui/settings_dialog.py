@@ -48,6 +48,8 @@ class SettingsDialog(QDialog):
                 combo.setMinimumContentsLength(12)
         self.tabs.setUsesScrollButtons(True)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        buttons.button(QDialogButtonBox.StandardButton.Save).setText("保存")
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
         layout = QVBoxLayout(self)
@@ -354,6 +356,8 @@ class SettingsDialog(QDialog):
         self.jpeg_quality = QSpinBox()
         self.jpeg_quality.setRange(1, 100)
         self.jpeg_quality.setValue(self.runtime.export_jpeg_quality)
+        self.keep_exif = QCheckBox("保留拍摄信息（可能含 GPS 位置）")
+        self.keep_exif.setChecked(self.runtime.export_keep_exif)
         self.performance = QComboBox()
         self.performance.addItem("省电（交互预览 768 px）", "battery")
         self.performance.addItem("平衡（交互预览 1280 px）", "balanced")
@@ -365,6 +369,7 @@ class SettingsDialog(QDialog):
         form.addRow("发送给 AI 的图像质量", self.ai_preview_quality)
         form.addRow("说明", QLabel("拖动时使用快速预览，松手后恢复所选清晰度。AI 图像质量独立设置；导出始终使用原始尺寸。"))
         form.addRow("默认 JPEG 质量", self.jpeg_quality)
+        form.addRow("导出 EXIF", self.keep_exif)
         form.addRow("性能模式", self.performance)
         form.addRow("硬件", QLabel(f"CPU 逻辑线程：{psutil.cpu_count(logical=True) or '未知'}\nAI 请求在后台执行"))
         return tab
@@ -386,6 +391,7 @@ class SettingsDialog(QDialog):
             ai_reinspection=self.reinspection.isChecked(), max_vision_calls=self.max_calls.value(),
             system_prompt=self.system_prompt.toPlainText().strip() or DEFAULT_SYSTEM_PROMPT,
             export_jpeg_quality=self.jpeg_quality.value(), performance_mode=self.performance.currentData(),
+              export_keep_exif=self.keep_exif.isChecked(),
         )
         try:
             for draft, key in self._drafts.values():

@@ -13,15 +13,23 @@ class JarvisArtProvider(AIProvider):
     id = "jarvisart_local"
     requires_visual_input = True
 
-    def __init__(self, config: ProviderConfig, *, runtime: JarvisArtRuntime | None = None, **_kwargs) -> None:
+    def __init__(self, config: ProviderConfig, *, runtime: JarvisArtRuntime | None = None, on_request_started=None, **_kwargs) -> None:
         self.config = config
         self.runtime = runtime or (
-            LocalJarvisArtRuntime(config.jarvisart_root, config.jarvisart_endpoint, auto_start=config.jarvisart_auto_start)
+            LocalJarvisArtRuntime(config.jarvisart_root, config.jarvisart_endpoint, auto_start=config.jarvisart_auto_start,
+                                 on_request_started=on_request_started)
             if config.local_mode == "real" else MockJarvisArtRuntime()
         )
+        if isinstance(self.runtime, LocalJarvisArtRuntime) and on_request_started is not None:
+            self.runtime.on_request_started = on_request_started
         self.name = f"JarvisArt Local GGUF · {self.runtime.status.state}"
         self.capabilities = config.capabilities
         self.last_unsupported_operations: list[str] = []
+
+    def set_execution_hooks(self, *, on_stage, check_cancelled) -> None:
+        if isinstance(self.runtime, LocalJarvisArtRuntime):
+            self.runtime.on_stage = on_stage
+            self.runtime.check_cancelled = check_cancelled
 
     @property
     def runtime_status(self):
@@ -50,6 +58,10 @@ class JarvisArtProvider(AIProvider):
                 local_exception=type(exc).__name__, request_sent=False,
             ) from exc
         self.last_unsupported_operations = list(result.unsupported_operations)
+        if isinstance(self.runtime, LocalJarvisArtRuntime):
+            # Successful inference may have auto-started a previously offline
+            # service; do not label that result with the constructor's status.
+            self.name = "JarvisArt Local GGUF · Ready"
         return result.plan
 
     def test_connection(self) -> str:

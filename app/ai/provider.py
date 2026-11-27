@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from app.ai.capabilities import ProviderCapabilities
@@ -28,6 +29,9 @@ class AIProvider(ABC):
 
     def validate_config(self) -> None:
         """Raise a clear error only when this provider's configuration is invalid."""
+
+    def set_execution_hooks(self, *, on_stage: Callable[[str, str], None], check_cancelled: Callable[[], None]) -> None:
+        """Optional local-runtime stages; transport request hooks stay separate."""
 
     def create_editing_plan(self, request: PlanningRequest) -> EditingPlan:
         return self.plan(request)

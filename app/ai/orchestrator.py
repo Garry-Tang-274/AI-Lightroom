@@ -54,6 +54,7 @@ class AIOrchestrator:
         reinspection_enabled: bool = False,
         max_vision_calls: int = 2,
         check_cancelled: Callable[[], None] | None = None,
+        on_stage: Callable[[str, str], None] | None = None,
     ) -> None:
         self.provider = provider
         self.preview_size = max(512, min(4096, preview_size))
@@ -61,6 +62,7 @@ class AIOrchestrator:
         self.reinspection_enabled = reinspection_enabled
         self.max_vision_calls = max(1, min(2, max_vision_calls))
         self.check_cancelled = check_cancelled or (lambda: None)
+        self.on_stage = on_stage or (lambda _stage, _message: None)
 
     def process(
         self,
@@ -72,11 +74,14 @@ class AIOrchestrator:
     ) -> AIProcessResult:
         self.check_cancelled()
         use_vision = self.should_use_vision(instruction) or bool(getattr(self.provider, "requires_visual_input", False))
+        self.on_stage("preparing_preview", "正在准备当前照片预览…" if use_vision else "正在整理当前参数与增量指令…")
         preview_jpeg = encode_preview(self._render(source_preview, state), self.preview_size, self.jpeg_quality) if use_vision else None
         request = PlanningRequest(instruction, state.snapshot(), preview_jpeg, history_summary)
         self.check_cancelled()
+        self.on_stage("planning", "正在准备调色请求…")
         plan = self.provider.plan(request)
         self.check_cancelled()
+        self.on_stage("validating", "已收到方案，正在校验参数和局部蒙版…")
         execution = apply_editing_plan(state, plan, selected_mask_id)
         warnings = _reject_unreliable_masks(source_preview, state, execution)
         plans = [plan]
@@ -92,6 +97,7 @@ class AIOrchestrator:
             and len(plans) < self.max_vision_calls
         ):
             self.check_cancelled()
+            self.on_stage("preparing_reinspection", "正在准备已开启的第二次检查…")
             rerendered = self._render(source_preview, execution.state)
             followup = PlanningRequest(
                 instruction="重新检查刚才的结果，只输出必要的微调，不重复已经正确的操作。",
@@ -101,8 +107,10 @@ class AIOrchestrator:
                 is_reinspection=True,
             )
             self.check_cancelled()
+            self.on_stage("planning", "正在准备第二次调色请求…")
             second_plan = self.provider.plan(followup)
             self.check_cancelled()
+            self.on_stage("validating", "正在校验复检方案…")
             second = apply_editing_plan(execution.state, second_plan, selected_mask_id)
             warnings.extend(_reject_unreliable_masks(source_preview, execution.state, second))
             execution = second
@@ -113,6 +121,8 @@ class AIOrchestrator:
             unsupported.extend(getattr(self.provider, "last_unsupported_operations", ()))
 
         # Validate the whole proposed transaction before the GUI can commit it.
+        self.check_cancelled()
+        self.on_stage("rendering", "正在渲染调整结果…")
         preview_pixels = self._render(source_preview, execution.state)
         self.check_cancelled()
         return AIProcessResult(

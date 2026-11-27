@@ -59,9 +59,13 @@ class LocalJarvisArtRuntime(JarvisArtRuntime):
     this app.
     """
 
-    def __init__(self, root: str = "", endpoint: str = "http://127.0.0.1:8765", *, auto_start: bool = True, manager: JarvisArtServiceManager | None = None) -> None:
+    def __init__(self, root: str = "", endpoint: str = "http://127.0.0.1:8765", *, auto_start: bool = True, manager: JarvisArtServiceManager | None = None,
+                 on_request_started=None, on_stage=None, check_cancelled=None) -> None:
         self.manager = manager or JarvisArtServiceManager(root, endpoint)
         self.auto_start = auto_start
+        self.on_request_started = on_request_started or (lambda: None)
+        self.on_stage = on_stage or (lambda _stage, _message: None)
+        self.check_cancelled = check_cancelled or (lambda: None)
 
     @property
     def status(self) -> JarvisArtRuntimeStatus:
@@ -77,15 +81,20 @@ class LocalJarvisArtRuntime(JarvisArtRuntime):
         return JarvisArtRuntimeStatus("real", status.state, status.message)
 
     def infer(self, preview_jpeg: bytes | None, instruction: str, state: EditorState) -> JarvisArtNativePlan:
+        self.check_cancelled()
         if not preview_jpeg:
             raise AIRequestError("JarvisArt 缺少预览图", "JarvisArt 本地视觉分析需要当前 JPEG 预览图。", provider="JarvisArt Local GGUF", model="qwen2_vl")
         status = self.manager.status()
         if status.state != "Ready":
             if not self.auto_start:
                 raise AIRequestError("JarvisArt 服务离线", status.message, provider="JarvisArt Local GGUF", model=status.model or "qwen2_vl")
+            self.check_cancelled()
+            self.on_stage("starting_local_model", "正在启动本地 JarvisArt 模型，尚未发送推理请求…")
             status = self.manager.start()
+            self.check_cancelled()
             if status.state != "Ready":
                 raise AIRequestError("JarvisArt 启动失败", status.message, provider="JarvisArt Local GGUF", model=status.model or "qwen2_vl")
+        self.check_cancelled()
         temp_path: Path | None = None
         try:
             with NamedTemporaryFile(prefix="ai-lightroom-jarvisart-", suffix=".jpg", delete=False) as handle:
@@ -99,6 +108,8 @@ class LocalJarvisArtRuntime(JarvisArtRuntime):
             # Local quantized models can take several minutes on consumer
             # hardware.  This runs in the dedicated AI worker, so favour a
             # reliable local result over a cloud-style short request deadline.
+            self.check_cancelled()
+            self.on_request_started()
             with urlopen(request, timeout=300.0) as response:
                 lua = response.read().decode("utf-8", errors="replace")
         except HTTPError as exc:
@@ -112,6 +123,7 @@ class LocalJarvisArtRuntime(JarvisArtRuntime):
                     temp_path.unlink(missing_ok=True)
                 except OSError:
                     pass
+        self.check_cancelled()
         return parse_jarvisart_lua(lua)
 
 

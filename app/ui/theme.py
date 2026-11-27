@@ -56,6 +56,12 @@ QLabel#mutedLabel { color: #a3afbb; }
 QLabel#panelTitle { font-size: 12pt; font-weight: 600; }
 QToolButton#sectionHeader { background: transparent; border: none; border-bottom: 1px solid #343e48; border-radius: 0; text-align: left; padding: 10px 5px; font-weight: 600; }
 QToolButton#sectionHeader:hover { background: #2c3540; }
+QLabel#parameterLabel[modified="true"] { color: #8ac9f1; }
+QToolButton#parameterReset { background: transparent; border-color: transparent; padding: 0; font-size: 13pt; color: #8ac9f1; }
+QToolButton#parameterReset:hover { background: #30465a; border-color: #597e9a; }
+QToolButton#parameterReset:disabled { background: transparent; color: #525d68; }
+QPushButton#canvasOpenButton { background: #287db4; border-color: #449ed4; color: white; font-weight: 600; }
+QPushButton#canvasOpenButton:hover { background: #3295cd; }
 QLabel#canvasInfo { color: #b0bdc8; background: transparent; padding: 7px 10px; }
 QWidget#canvasHeader { background: #1c2229; border-bottom: 1px solid #303942; }
 QToolTip { background: #263747; color: #f4f7fa; border: 1px solid #54728a; padding: 5px; }

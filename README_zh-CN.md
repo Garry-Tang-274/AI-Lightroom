@@ -16,14 +16,15 @@ AI Lightroom 是一款 Windows 桌面照片编辑器：传统参数调色与自�
 
 **[中文新手完整指南](docs/GETTING_STARTED_zh-CN.md)** · [English getting-started guide](docs/GETTING_STARTED.md)
 
-日常使用可先看[手动修图与文字调色示例](docs/EDITING_WORKFLOWS.md)。**v1.1.1 工作区与稳定性升级**的主要变化见[中英双语发布说明](docs/RELEASE_1_1.md)。
+日常使用可先看[手动修图与文字调色示例](docs/EDITING_WORKFLOWS.md)。**v1.2.0 照片组与调色配方**的主要变化见[中英双语发布说明](docs/RELEASE_1_2.md)。
 
 ## 已支持的功能
 
-- JPG / PNG 后台载入、拖入打开、缩放、直方图、可拖动左右对比、专注模式、撤回/重做与编辑恢复。
+- JPG / PNG 后台载入、多选或拖入照片组、组内导航、缩放、直方图、可拖动左右对比、专注模式，每张照片独立保存编辑与撤回/重做历史。
 - 右侧独立的“调色 / AI 助手”页；调色参数按明暗、色彩、HSL、曲线、分级、细节/降噪、效果、光学、几何和校准分组，可折叠并按中英文名称搜索。
+- 已改参数高亮、仅看已调整、单项复位、分级融合/平衡，以及可保存并跨启动复用的调色配方。
 - 局部蒙版、画笔蒙版和非破坏性水印；渐变与范围参数、自定义水印位置均可手动修改。
-- 从原始全分辨率照片以 sRGB 工作色彩空间渲染导出 JPG / PNG，并保留可用的 EXIF 与 DPI。
+- 从原始全分辨率照片以 sRGB 工作色彩空间渲染导出 JPG / PNG，可选保留或去除摄影 EXIF，并保留可用的 DPI。
 - Gemini、OpenAI、Qwen / DashScope、DeepSeek 文本增量、Custom OpenAI-compatible、JarvisArt Local GGUF 与离线 Mock。
 - API 调用默认无自动重试；云端调用有本地每日安全上限。
 
@@ -46,9 +47,11 @@ AI Lightroom 是一款 Windows 桌面照片编辑器：传统参数调色与自�
 ## 快速操作
 
 1. 从 GitHub Releases 下载 Windows 安装包或 ZIP；安装包最简单，ZIP 必须完整解压后再运行。
-2. 打开或拖入 JPG / PNG 照片。在右侧**调色**页折叠或搜索参数；左侧有**蒙版**与**水印**。
-3. 按 `C` 打开可拖动的左右对比，按 `Ctrl+Tab` 切换专注模式；`Ctrl+S` 导出一份全尺寸成片。程序会拒绝覆盖当前原图。
+2. 用 `Ctrl+O` 多选 JPG / PNG，或拖入多张照片。画布标题栏箭头及 `Alt+←` / `Alt+→` 切换照片，点照片计数可跳转。在右侧**调色**页搜索参数或勾选**仅看已调整**；左侧有**蒙版**与**水印**。
+3. 按 `C` 打开可拖动的左右对比，按 `Ctrl+Tab` 切换专注模式；`Ctrl+S` 导出一份全尺寸成片。程序会拒绝覆盖当前照片组内的任何原图。
 4. 如需 AI，在 **文件 → 设置 → AI 服务**配置 Provider；切换右侧 **AI 助手**页，`Ctrl+Enter` 发送，`Enter` 换行。
+
+回访当前组内已编辑的照片，会继续它自己的编辑与历史；首次从持久记录恢复仍会询问。需要复用风格时，点工具栏**配方 → 将当前调色存为配方…**并命名，再切换照片应用。配方保留基础调色、HSL、曲线、分级、细节、效果和校准，不带入光学、几何、蒙版或水印；应用可一次撤销，配方在关闭程序后仍保留。
 
 ## 预览质量与 AI 发送质量
 
@@ -65,12 +68,15 @@ AI Lightroom 是一款 Windows 桌面照片编辑器：传统参数调色与自�
 
 - 不配置 API Key 也可以完整手动修图。
 - 云端 AI 只接收缩小的 JPEG 预览和当前编辑状态；原始全分辨率照片始终保留在本机。
+- AI 面板显示实际处理阶段与耗时，不伪造进度百分比。取消后不应用结果；已发送的云端请求仍可能计费，本地模型也可能仍在运行。失败不会自动重试。
+- **设置 → 性能与导出 → 导出 EXIF**默认保留拍摄信息，可能含 GPS。分享前取消此项，新导出的照片将去除摄影 EXIF，包括其中的 GPS。
 - API Key 存在 Windows Credential Manager，不写入源码、日志、发布包或 Git。
 - JarvisArt Local GGUF 是用户自行安装的本地运行时，模型、llama.cpp 与许可证不随本项目分发。只有 **Local GGUF** 才会进行真实本地推理；**Mock** 是固定开发样例，软件会阻止它用于真实调色。
 - AI Lightroom 代码采用 [MIT License](LICENSE)；第三方说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。本项目与 Adobe 没有隶属或认可关系。
 
 ## 文档
 
+- [使用指南](docs/USER_GUIDE_zh-CN.md) · [1.2 发布说明](docs/RELEASE_1_2.md) · [渲染器配对性能实测](docs/benchmarks/README.md)
 - [中文新手完整指南](docs/GETTING_STARTED_zh-CN.md) · [English getting-started guide](docs/GETTING_STARTED.md)
 - [安装包说明](docs/INSTALLER_zh-CN.md) · [Installer guide (English)](docs/INSTALLER.md)
 - [JarvisArt 本地部署与连接说明](docs/JARVISART_zh-CN.md)

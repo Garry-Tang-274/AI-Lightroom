@@ -16,20 +16,22 @@ AI Lightroom 是一款 Windows 桌面照片编辑器，提供非破坏性的传�
 
 **Start here / 使用入口:** [Windows release](https://github.com/Garry-Tang-274/AI-Lightroom/releases/latest) · [Manual and text-guided workflows / 手动与文字调色](docs/EDITING_WORKFLOWS.md) · [中文指南](docs/GETTING_STARTED_zh-CN.md)
 
-Version **1.1.1 — Workspace & Reliability** adds a clearer editing workspace, faster interactive previews, and fixes for editing, recovery, AI, export, and Windows packaging. See [release notes / 发布说明](docs/RELEASE_1_1.md).
+Version **1.2.0 — Photo Sets & Reusable Looks** adds multi-photo navigation, saved grading recipes, changed-parameter review, visible AI stages and elapsed time, EXIF privacy controls, and faster CPU rendering. See [release notes / 发布说明](docs/RELEASE_1_2.md).
 
-**1.1.1 — 工作区与稳定性升级**带来更清晰的编辑布局、更快的拖动预览，以及编辑、恢复、AI、导出与 Windows 打包修复。详见[发布说明](docs/RELEASE_1_1.md)。
+**1.2.0 — 照片组与调色配方**带来多照片切换、可保存的调色配方、已改参数筛选、真实 AI 阶段与计时、EXIF 隐私开关，以及更快的 CPU 渲染。详见[发布说明](docs/RELEASE_1_2.md)。
 
 ## Features / 功能
 
-- Background JPG/PNG loading, drag-and-drop, recent files, zoom, histogram, draggable before/after comparison, focus mode, and recoverable undo/redo history.<br>
-  支持 JPG/PNG 后台载入、拖入打开、最近文件、缩放、直方图、可拖动的左右对比、专注模式，以及可恢复的撤销/重做历史。
+- Background JPG/PNG loading, multi-select/drag-and-drop photo sets, per-photo edit/history recovery, zoom, histogram, draggable before/after comparison, and focus mode.<br>
+  支持 JPG/PNG 后台载入、多选或拖入照片组、每张照片独立的编辑/历史恢复、缩放、直方图、可拖动的左右对比与专注模式。
 - Searchable, collapsible adjustment groups: tone, colour, HSL, curves, grading, detail/noise, effects, optics, geometry, and calibration. Separate **调色 / Adjustments** and **AI 助手 / AI Assistant** tabs give each workflow room.<br>
   参数按明暗、色彩、HSL、曲线、分级、细节/降噪、效果、光学、几何和校准分组，支持折叠与搜索；右侧**调色**和 **AI 助手**分开显示。
+- Changed-value highlighting and filtering, single-parameter reset, grading blending/balance, and persistent named recipes for reusing a look.<br>
+  已改参数高亮与筛选、单项复位、分级融合/平衡，以及可跨启动复用的命名调色配方。
 - Editable gradient/range masks, brush masks, and non-destructive watermarks with exact size, opacity, and custom-position controls.<br>
   渐变/范围蒙版可修改区域参数；支持画笔蒙版和非破坏性水印，可精确设置水印大小、不透明度与自定义位置。
-- Full-resolution JPG/PNG export in the sRGB working colour space, with available EXIF and DPI metadata.<br>
-  以 sRGB 工作色彩空间全分辨率导出 JPG/PNG，并保留可用的 EXIF 与 DPI 元数据。
+- Full-resolution JPG/PNG export in the sRGB working colour space, with optional photographic EXIF and available DPI metadata.<br>
+  以 sRGB 工作色彩空间全分辨率导出 JPG/PNG，可选择保留或去除摄影 EXIF，并保留可用的 DPI 元数据。
 - One shared `EditingPlan` and `EditorState` for manual controls and every AI provider.<br>
   手动控件和所有 AI Provider 共用同一套 `EditingPlan` 与 `EditorState`。
 - Provider registry: JarvisArt Local GGUF, Gemini, OpenAI, Qwen/DashScope, DeepSeek text adjustments, Custom OpenAI-compatible API, and Offline Mock.<br>
@@ -49,14 +51,18 @@ For source setup, see [Installation / 安装与源码运行](docs/INSTALLATION.m
 
 ## Quick start / 快速开始
 
-1. Open or drag a JPG/PNG into the app.<br>
-   打开或拖入一张 JPG/PNG 照片。
-2. Use the right **调色 / Adjustments** tab; search a parameter by Chinese or English name. Double-click a slider to restore its default, or type an exact value. Masks and watermarks are on the left.<br>
-   在右侧**调色**页按中文或英文名称搜索参数。双击滑块恢复默认值，或直接输入精确数值；蒙版和水印在左侧。
-3. Press `C` for a draggable before/after split, then export with `Ctrl+S` or `Ctrl+Shift+S`. Export refuses the source file path and writes a separate full-resolution result.<br>
-   按 `C` 打开可拖动的左右对比，再用 `Ctrl+S` 或 `Ctrl+Shift+S` 导出。导出会拒绝原图路径，另存全分辨率成片。
+1. Use `Ctrl+O` to select one or more JPG/PNG files, or drag several into the app. Use the canvas-title arrows or `Alt+←` / `Alt+→` to move through the set; click its counter to jump to a photo.<br>
+   用 `Ctrl+O` 多选 JPG/PNG，或拖入多张照片。通过画布标题栏箭头或 `Alt+←` / `Alt+→` 切换，点击照片计数可直接跳转。
+2. In **调色 / Adjustments**, search by Chinese/English name or enable **仅看已调整 / Changed only**. Use each value's reset button to restore its default; masks and watermarks stay on the left. Save a reusable look from the toolbar's **配方 / Recipes** menu.<br>
+   在**调色**页按中英文名称搜索，或勾选**仅看已调整**。每个数值旁的复位按钮恢复该项默认值；蒙版和水印仍在左侧。需要复用风格时，从工具栏**配方**菜单保存。
+3. Press `C` for a draggable before/after split, then export with `Ctrl+S` or `Ctrl+Shift+S`. Export refuses all originals in the current photo set and writes a separate full-resolution result.<br>
+   按 `C` 打开可拖动左右对比，再用 `Ctrl+S` 或 `Ctrl+Shift+S` 导出。导出拒绝覆盖当前照片组内的任何原图，另存全分辨率成片。
 4. For AI, configure a provider in **文件 → 设置 / File → Settings**, open the right **AI 助手 / AI Assistant** tab, and send with `Ctrl+Enter`.<br>
    使用 AI 时，先在**文件 → 设置**配置 Provider，再切换右侧 **AI 助手**页，用 `Ctrl+Enter` 发送。
+
+Returning to a visited photo in the current set resumes its own edits and history. Opening saved work for the first time still asks whether to restore it. Named recipes persist after closing the app; they reuse tone, HSL, curves, grading, detail, effects, and calibration without copying photo-specific optics, geometry, masks, or watermarks. Applying a recipe is one undo step.
+
+回到当前照片组里已经编辑过的照片时，会继续它自己的编辑与历史；首次打开持久保存的编辑记录，仍会询问是否恢复。命名配方在关闭程序后保留，复用明暗、HSL、曲线、分级、细节、效果和校准，不复制照片专属的光学、几何、蒙版或水印；应用一次配方可一次撤销。
 
 ## Preview quality / 预览质量
 
@@ -131,12 +137,17 @@ Choose **Custom / OpenAI-compatible API** in Settings and supply a Provider Name
   API Key 单独存储在 Windows Credential Manager 中（可由环境变量覆盖），绝不写入项目配置、日志、发布包或版本控制。
 - A cancelled cloud request may already have reached the provider and may count as one call.<br>
   被取消的云端请求可能已经到达服务商，仍可能计为一次调用。
+- AI shows the observed processing stage and elapsed time, not a guessed completion percentage. Cancelled results are not applied; a local model may continue running until its current request finishes.<br>
+  AI 显示实际处理阶段与已用时间，不猜测完成百分比。取消后不应用结果；本地模型可能仍会继续执行已经发出的请求。
+- Before sharing a photo, use **Settings → Performance & Export → Export EXIF** to turn off **保留拍摄信息（可能含 GPS 位置） / Keep photographic information (may include GPS)**. It is enabled by default; disabling it omits photographic EXIF, including GPS, from new exports.<br>
+  分享照片前，可在**设置 → 性能与导出 → 导出 EXIF**取消**保留拍摄信息（可能含 GPS 位置）**。默认开启；关闭后，新导出的照片不携带摄影 EXIF，包括其中的 GPS。
 
 ## Keyboard shortcuts / 键盘快捷键
 
 | Shortcut / 快捷键 | Action / 操作 |
 | --- | --- |
-| `Ctrl+O` | Open image / 打开图像 |
+| `Ctrl+O` | Open one or multiple photos / 打开一张或多张照片 |
+| `Alt+←` / `Alt+→` | Previous / next photo in the current set / 当前照片组上一张 / 下一张 |
 | `Ctrl+S` / `Ctrl+Shift+S` | Export / Export as / 导出 / 另存为 |
 | `Ctrl+Z` | Undo / 撤回 |
 | `Ctrl+Y` or `Ctrl+Shift+Z` | Redo / 重做 |
@@ -152,6 +163,7 @@ Choose **Custom / OpenAI-compatible API** in Settings and supply a Provider Name
 
 ## Documentation / 文档
 
+- [1.2 release notes / 1.2 发布说明](docs/RELEASE_1_2.md) · [Paired renderer benchmark / 渲染器配对实测](docs/benchmarks/README.md)
 - [Getting started / 新手指南](docs/GETTING_STARTED.md) · [中文新手完整指南](docs/GETTING_STARTED_zh-CN.md)
 - [Installer guide / 安装包说明](docs/INSTALLER.md) · [中文安装包说明](docs/INSTALLER_zh-CN.md)
 - [User guide / 使用指南](docs/USER_GUIDE.md) · [中文使用指南](docs/USER_GUIDE_zh-CN.md)

@@ -27,6 +27,7 @@ _HSL_CENTERS = {
     HSLColor.PURPLE: 275.0,
     HSLColor.MAGENTA: 325.0,
 }
+_LUMINANCE_WEIGHTS = np.array([[0.2126, 0.7152, 0.0722]], dtype=np.float32)
 
 
 def render_image(source: np.ndarray, state: EditorState) -> np.ndarray:
@@ -77,7 +78,12 @@ def render_image(source: np.ndarray, state: EditorState) -> np.ndarray:
             continue
         adjusted = _apply_local_adjustments(image, layer.adjustments)
         image = image * (1.0 - mask) + adjusted * mask
-    rendered = np.clip(np.rint(image * 255.0), 0, 255).astype(np.uint8)
+    # The working float buffer belongs to this render. Reuse it rather than
+    # allocating three more full-resolution RGB buffers at export time.
+    np.multiply(image, 255.0, out=image)
+    np.rint(image, out=image)
+    np.clip(image, 0, 255, out=image)
+    rendered = image.astype(np.uint8)
     return composite_watermarks(rendered, state.watermarks)
 
 
@@ -118,7 +124,9 @@ def _linear_to_srgb(image: np.ndarray) -> np.ndarray:
 
 
 def _luminance(image: np.ndarray) -> np.ndarray:
-    return image[..., 0] * 0.2126 + image[..., 1] * 0.7152 + image[..., 2] * 0.0722
+    # A single native pass avoids three strided channel temporaries. This is
+    # the same float32 weighted sum, not an 8-bit color conversion.
+    return cv2.transform(image, _LUMINANCE_WEIGHTS)
 
 
 def _white_balance(image: np.ndarray, temperature: float, tint: float) -> np.ndarray:
@@ -179,6 +187,9 @@ def _tone(
         slope = 2.0 ** (strength * 1.35)
         image = 0.5 + (image - 0.5) * slope
 
+    if not any((highlights, shadows, whites, blacks)):
+        return np.clip(image, 0.0, 1.0)
+
     luma = _luminance(np.clip(image, 0, 1))
     delta = np.zeros_like(luma)
     if highlights:
@@ -208,8 +219,13 @@ def _tone(
 
 
 def _smoothstep(edge0: float, edge1: float, values: np.ndarray) -> np.ndarray:
-    x = np.clip((values - edge0) / max(edge1 - edge0, 1e-6), 0.0, 1.0)
-    return x * x * (3.0 - 2.0 * x)
+    x = np.subtract(values, edge0)
+    np.divide(x, max(edge1 - edge0, 1e-6), out=x)
+    np.clip(x, 0.0, 1.0, out=x)
+    factor = 3.0 - 2.0 * x
+    np.square(x, out=x)
+    np.multiply(x, factor, out=x)
+    return x
 
 
 def _saturation(image: np.ndarray, saturation: float, vibrance: float) -> np.ndarray:
@@ -235,29 +251,33 @@ def _saturation(image: np.ndarray, saturation: float, vibrance: float) -> np.nda
 def _hsl(image: np.ndarray, state: EditorState) -> np.ndarray:
     if all(values.hue == values.saturation == values.luminance == 0 for values in state.hsl.values()):
         return image
-    hsv = cv2.cvtColor(np.clip(image, 0, 1), cv2.COLOR_RGB2HSV)
-    hue_original = hsv[..., 0].copy()
-    chroma_weight = _smoothstep(0.01, 0.12, hsv[..., 1])
+    # Contiguous planes avoid repeated strided writes while adjusting multiple
+    # color ranges. Keep the original hue for all range-selection weights.
+    hue, saturation, value = cv2.split(cv2.cvtColor(np.clip(image, 0, 1), cv2.COLOR_RGB2HSV))
+    hue_original = hue.copy()
+    chroma_weight = _smoothstep(0.01, 0.12, saturation)
     for color, adjustment in state.hsl.items():
         if adjustment.hue == adjustment.saturation == adjustment.luminance == 0:
             continue
         center = _HSL_CENTERS[color]
-        distance = np.abs((hue_original - center + 180.0) % 360.0 - 180.0)
+        distance = np.abs(hue_original - center)
+        np.minimum(distance, 360.0 - distance, out=distance)
         weight = np.clip(1.0 - distance / 48.0, 0.0, 1.0)
         weight = weight * weight * (3.0 - 2.0 * weight) * chroma_weight
         if adjustment.hue:
-            hsv[..., 0] = (hsv[..., 0] + weight * adjustment.hue * 0.35) % 360.0
+            hue += weight * adjustment.hue * 0.35
+            np.remainder(hue, 360.0, out=hue)
         if adjustment.saturation:
             amount = adjustment.saturation / 100.0
-            target_delta = (1.0 - hsv[..., 1]) * amount if amount > 0 else hsv[..., 1] * amount
-            hsv[..., 1] += weight * target_delta
+            target_delta = (1.0 - saturation) * amount if amount > 0 else saturation * amount
+            saturation += weight * target_delta
         if adjustment.luminance:
             amount = adjustment.luminance / 100.0
-            room = (1.0 - hsv[..., 2]) if amount > 0 else hsv[..., 2]
-            hsv[..., 2] += weight * room * amount * 0.65
-    hsv[..., 1] = np.clip(hsv[..., 1], 0.0, 1.0)
-    hsv[..., 2] = np.clip(hsv[..., 2], 0.0, 1.0)
-    return cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB)
+            room = (1.0 - value) if amount > 0 else value
+            value += weight * room * amount * 0.65
+    np.clip(saturation, 0.0, 1.0, out=saturation)
+    np.clip(value, 0.0, 1.0, out=value)
+    return cv2.cvtColor(cv2.merge((hue, saturation, value)), cv2.COLOR_HSV2RGB)
 
 
 def _color_grading(image: np.ndarray, state: EditorState) -> np.ndarray:

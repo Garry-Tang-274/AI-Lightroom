@@ -2,7 +2,7 @@
 ; Windows credentials, local model weights, or provider caches.
 #define MyAppName "AI Lightroom"
 #ifndef MyAppVersion
-#define MyAppVersion "1.1.1"
+#define MyAppVersion "1.2.0"
 #endif
 #define MyAppPublisher "AI Lightroom"
 #define MyAppExeName "AI Lightroom.exe"
@@ -39,6 +39,13 @@ Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\README_zh-CN.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\THIRD_PARTY_NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\THIRD_PARTY_NOTICES_zh-CN.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\LICENSE_zh-CN.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\CHANGELOG*.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\CONTRIBUTING*.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\CODE_OF_CONDUCT*.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\SECURITY*.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\assets\app.png"; DestDir: "{app}\assets"; Flags: ignoreversion
 Source: "..\docs\*"; DestDir: "{app}\docs"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]

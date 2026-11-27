@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSlider,
+    QStyle,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -134,6 +135,7 @@ class CollapsibleSection(QWidget):
 
     def __init__(self, title: str, keywords: str, expanded: bool = False, parent=None):
         super().__init__(parent)
+        self.title = title
         self.keywords = f"{title} {keywords}".casefold()
         self.header = QToolButton()
         self.header.setObjectName("sectionHeader")
@@ -159,6 +161,10 @@ class CollapsibleSection(QWidget):
         self.header.setArrowType(Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow)
         self.body.setVisible(expanded)
 
+    def set_changed_count(self, count: int) -> None:
+        self.header.setText(f"{self.title}  ·  {count}" if count else self.title)
+        self.header.setAccessibleName(f"{self.title}，{count} 项已调整")
+
 
 class ParameterSlider(QWidget):
     value_changed = Signal(str, float)
@@ -169,6 +175,14 @@ class ParameterSlider(QWidget):
         super().__init__(parent)
         self.spec = spec
         self.label = QLabel(spec.label)
+        self.label.setObjectName("parameterLabel")
+        self.reset_button = QToolButton()
+        self.reset_button.setObjectName("parameterReset")
+        self.reset_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_BrowserReload))
+        self.reset_button.setFixedSize(24, 24)
+        self.reset_button.setToolTip(f"重置{spec.label}为 {spec.default * spec.display_multiplier:g}{spec.suffix}")
+        self.reset_button.setAccessibleName(f"重置{spec.label}")
+        self.reset_button.clicked.connect(self.reset_value)
         self.value_label = NoWheelDoubleSpinBox()
         self.value_label.setRange(spec.minimum / spec.scale * spec.display_multiplier, spec.maximum / spec.scale * spec.display_multiplier)
         self.value_label.setDecimals(2 if spec.scale / spec.display_multiplier != 1 else 0)
@@ -198,17 +212,38 @@ class ParameterSlider(QWidget):
         top.addWidget(self.label)
         top.addStretch()
         top.addWidget(self.value_label)
+        top.addWidget(self.reset_button)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(2, 2, 2, 4)
         layout.setSpacing(2)
         layout.addLayout(top)
         layout.addWidget(self.slider)
+        self._update_modified()
+
+    def is_modified(self) -> bool:
+        return self.slider.value() != self.slider.reset_value
+
+    def _update_modified(self) -> None:
+        modified = self.is_modified()
+        self.reset_button.setEnabled(modified)
+        if self.label.property("modified") != modified:
+            self.label.setProperty("modified", modified)
+            self.label.style().unpolish(self.label)
+            self.label.style().polish(self.label)
+
+    def reset_value(self) -> None:
+        if not self.is_modified():
+            return
+        self.interaction_started.emit(self.spec.key)
+        self.slider.setValue(self.slider.reset_value)
+        self.interaction_finished.emit(self.spec.key)
 
     def _emit_value(self, raw: int) -> None:
         value = raw / self.spec.scale
         self.value_label.blockSignals(True)
         self.value_label.setValue(value * self.spec.display_multiplier)
         self.value_label.blockSignals(False)
+        self._update_modified()
         self.value_changed.emit(self.spec.key, self.slider.value() / self.spec.scale)
 
     def _spin_value_changed(self, value: float) -> None:
@@ -216,6 +251,7 @@ class ParameterSlider(QWidget):
         self.slider.blockSignals(True)
         self.slider.setValue(round(value * self.spec.scale))
         self.slider.blockSignals(False)
+        self._update_modified()
         self.value_changed.emit(self.spec.key, value)
 
     def set_value(self, value: float) -> None:
@@ -223,6 +259,7 @@ class ParameterSlider(QWidget):
         self.slider.setValue(round(value * self.spec.scale))
         self.slider.blockSignals(False)
         self._update_label(value)
+        self._update_modified()
 
     def _update_label(self, value: float) -> None:
         self.value_label.blockSignals(True)
@@ -248,6 +285,9 @@ class AdjustmentPanel(QScrollArea):
         self._sections: list[CollapsibleSection] = []
         self._section_controls: dict[CollapsibleSection, list[ParameterSlider]] = {}
         self._saved_expansion: list[bool] | None = None
+        self._active_interaction = False
+        self._state = EditorState()
+        self._defaults = EditorState()
         container = QWidget()
         layout = QVBoxLayout(container)
         layout.setContentsMargins(12, 12, 12, 12)
@@ -270,12 +310,22 @@ class AdjustmentPanel(QScrollArea):
         self.search.setClearButtonEnabled(True)
         self.search.setAccessibleName("搜索调整参数")
         layout.addWidget(self.search)
+        filter_row = QHBoxLayout()
+        self.modified_only = QCheckBox("仅看已调整")
+        self.modified_only.setToolTip("只查看偏离默认值的全局参数；蒙版和水印在各自面板中。")
+        self.changed_count = QLabel("0 项")
+        self.changed_count.setObjectName("mutedLabel")
+        filter_row.addWidget(self.modified_only)
+        filter_row.addStretch()
+        filter_row.addWidget(self.changed_count)
+        layout.addLayout(filter_row)
         self.no_results = QLabel("没有匹配的调整")
         self.no_results.setObjectName("mutedLabel")
         self.no_results.hide()
         layout.addWidget(self.no_results)
 
         self.controls: dict[str, ParameterSlider] = {}
+        self.advanced_controls: dict[str, dict[str, ParameterSlider]] = {}
         for title, keywords, keys, expanded in (
             ("明暗", "Light · Exposure / Contrast / Highlights / Shadows", ("exposure", "contrast", "highlights", "shadows", "whites", "blacks"), True),
             ("色彩", "Color · White balance / Saturation", ("temperature", "tint", "saturation", "vibrance"), False),
@@ -287,6 +337,7 @@ class AdjustmentPanel(QScrollArea):
                     self._add_basic_control(section, spec)
 
         hsl_group = self._section(layout, "颜色混合 · HSL", "Color mixer · Hue / Saturation / Luminance")
+        self._hsl_group = hsl_group
         hsl_layout = hsl_group.body_layout
         self.hsl_selector = NoWheelComboBox()
         for color, label in (
@@ -315,16 +366,22 @@ class AdjustmentPanel(QScrollArea):
             hsl_layout.addWidget(control)
             self._section_controls[hsl_group].append(control)
         self.hsl_selector.currentIndexChanged.connect(self._show_selected_hsl)
+        self.hsl_empty = QLabel("此颜色未调整，请选择带 • 的颜色。")
+        self.hsl_empty.setObjectName("mutedLabel")
+        self.hsl_empty.setWordWrap(True)
+        hsl_layout.addWidget(self.hsl_empty)
 
         curve_group = self._section(layout, "曲线", "Tone curves · RGB / Red / Green / Blue")
+        self._curve_group = curve_group
         curve_layout = curve_group.body_layout
         self.curve_panel = CurvePanel()
-        self.curve_panel.curve_changed.connect(self.curve_changed)
+        self.curve_panel.curve_changed.connect(self._curve_value_changed)
         self.curve_panel.interaction_started.connect(lambda: self.interaction_started.emit("调整曲线"))
         self.curve_panel.interaction_finished.connect(lambda: self.interaction_finished.emit("调整曲线"))
         curve_layout.addWidget(self.curve_panel)
 
         grading_group = self._section(layout, "色彩分级", "Color grading · Shadows / Midtones / Highlights")
+        self._grading_group = grading_group
         grading_layout = grading_group.body_layout
         self.grading_selector = NoWheelComboBox()
         self.grading_selector.addItem("阴影", "shadows")
@@ -345,12 +402,20 @@ class AdjustmentPanel(QScrollArea):
             grading_layout.addWidget(control)
             self._section_controls[grading_group].append(control)
         self.grading_selector.currentIndexChanged.connect(self._show_selected_grading)
+        self.grading_empty = QLabel("此明暗区域未调整，请选择带 • 的区域。")
+        self.grading_empty.setObjectName("mutedLabel")
+        self.grading_empty.setWordWrap(True)
+        grading_layout.addWidget(self.grading_empty)
+        self._add_advanced_controls(grading_group, "color_grading", (
+            SliderSpec("blending", "分级融合", 0, 100, default=50),
+            SliderSpec("balance", "分级平衡", -100, 100),
+        ))
 
-        self.advanced_controls: dict[str, dict[str, ParameterSlider]] = {}
         detail_group = self._section(layout, "细节", "Detail · Sharpening / Noise reduction")
         self._add_basic_control(detail_group, next(spec for spec in BASIC_SPECS if spec.key == "sharpen"))
         self._add_advanced_controls(detail_group, "detail", DETAIL_SPECS)
         effects_group = self._section(layout, "效果", "Effects · Vignette / Film grain")
+        self._effects_group = effects_group
         effects_layout = effects_group.body_layout
         self._add_basic_control(effects_group, next(spec for spec in BASIC_SPECS if spec.key == "vignette"))
         self._add_advanced_controls(effects_group, "effects", EFFECTS_SPECS)
@@ -360,15 +425,16 @@ class AdjustmentPanel(QScrollArea):
         self.vignette_style.addItem("暗角样式：颜色优先", 2)
         self.vignette_style.addItem("暗角样式：保留", 3)
         self.vignette_style.currentIndexChanged.connect(
-            lambda _index: self.advanced_adjustment_changed.emit("effects", "vignette_style", self.vignette_style.currentData())
+            lambda _index: self._advanced_value_changed("effects", "vignette_style", self.vignette_style.currentData())
         )
         effects_layout.addWidget(self.vignette_style)
 
         optics_group = self._section(layout, "光学", "Optics · Chromatic aberration / Defringe")
+        self._optics_group = optics_group
         optics_layout = optics_group.body_layout
         self.remove_chromatic_aberration = QCheckBox("自动去色边（紫 / 绿）")
         self.remove_chromatic_aberration.toggled.connect(
-            lambda checked: self.advanced_adjustment_changed.emit("optics", "remove_chromatic_aberration", checked)
+            lambda checked: self._advanced_value_changed("optics", "remove_chromatic_aberration", checked)
         )
         optics_layout.addWidget(self.remove_chromatic_aberration)
         self._add_advanced_controls(optics_group, "optics", OPTICS_SPECS)
@@ -377,8 +443,10 @@ class AdjustmentPanel(QScrollArea):
         self._add_advanced_group(layout, "相机校准", "calibration", CALIBRATION_SPECS, "Calibration · Red / Green / Blue primaries")
         layout.addStretch()
         self.setWidget(container)
-        self._state = EditorState()
         self.search.textChanged.connect(self._filter_controls)
+        self.modified_only.toggled.connect(self._modified_filter_changed)
+        self.interaction_started.connect(self._begin_filter_interaction)
+        self.interaction_finished.connect(self._finish_filter_interaction)
         self.set_state(self._state)
 
     def _section(self, layout: QVBoxLayout, title: str, keywords: str, expanded: bool = False) -> CollapsibleSection:
@@ -390,7 +458,7 @@ class AdjustmentPanel(QScrollArea):
 
     def _add_basic_control(self, section: CollapsibleSection, spec: SliderSpec) -> None:
         control = ParameterSlider(spec)
-        control.value_changed.connect(self.adjustment_changed)
+        control.value_changed.connect(self._basic_value_changed)
         control.interaction_started.connect(lambda _key, label=spec.label: self.interaction_started.emit(label))
         control.interaction_finished.connect(lambda _key, label=spec.label: self.interaction_finished.emit(label))
         self.controls[spec.key] = control
@@ -399,30 +467,99 @@ class AdjustmentPanel(QScrollArea):
 
     def _filter_controls(self, query: str) -> None:
         query = query.strip().casefold()
-        if query and self._saved_expansion is None:
+        only_changed = self.modified_only.isChecked()
+        filtering = bool(query) or only_changed
+        if filtering and self._saved_expansion is None:
             self._saved_expansion = [section.header.isChecked() for section in self._sections]
+        counts = self._changed_counts()
         matches = 0
         for index, section in enumerate(self._sections):
             section_match = query in section.keywords
             controls = self._section_controls[section]
-            any_control = False
+            any_match = False
             for control in controls:
                 terms = f"{control.spec.label} {control.spec.key} {control.spec.key.replace('_', ' ')}".casefold()
-                visible = not query or section_match or query in terms
-                control.setVisible(visible)
-                any_control |= visible
-            visible = not query or section_match or any_control
+                text_match = not query or section_match or query in terms
+                control.setVisible(text_match and (not only_changed or control.is_modified()))
+                any_match |= text_match
+            visible = (not query or section_match or any_match) and (not only_changed or counts[section] > 0)
             section.setVisible(visible)
             matches += int(visible)
-            if query and visible:
+            if filtering and visible:
                 section.set_expanded(True)
-            elif not query and self._saved_expansion is not None:
+            elif not filtering and self._saved_expansion is not None:
                 section.set_expanded(self._saved_expansion[index])
+        self.no_results.setText("还没有已调整的全局参数" if only_changed and not query else "没有匹配的调整")
         self.no_results.setVisible(matches == 0)
-        if not query:
+        if not filtering:
             self._saved_expansion = None
-        self.vignette_style.setVisible(not query or query in "效果 effects 暗角样式 vignette style")
-        self.remove_chromatic_aberration.setVisible(not query or query in "光学 optics 移除色差 chromatic aberration")
+        self.vignette_style.setVisible((not query or query in "效果 effects 暗角样式 vignette style") and (not only_changed or self._state.effects.vignette_style != 0))
+        self.remove_chromatic_aberration.setVisible((not query or query in "光学 optics 自动去色边 移除色差 chromatic aberration") and (not only_changed or self._state.optics.remove_chromatic_aberration))
+        self.hsl_empty.setVisible(only_changed and all(control.isHidden() for control in self.hsl_controls.values()))
+        graded_regions = any(getattr(self._state.color_grading, region) != getattr(self._defaults.color_grading, region)
+                             for region in ("shadows", "midtones", "highlights"))
+        self.grading_selector.setVisible(not only_changed or graded_regions)
+        self.grading_empty.setVisible(only_changed and graded_regions and all(control.isHidden() for control in self.grading_controls.values()))
+
+    def _changed_counts(self) -> dict[CollapsibleSection, int]:
+        counts = {section: sum(control.is_modified() for control in controls) for section, controls in self._section_controls.items()}
+        counts[self._hsl_group] = sum(value != 0 for adjustment in self._state.hsl.values() for value in adjustment.model_dump().values())
+        counts[self._grading_group] = sum(value != 0 for region in ("shadows", "midtones", "highlights")
+                                          for value in getattr(self._state.color_grading, region).model_dump().values())
+        counts[self._grading_group] += sum(control.is_modified() for control in self.advanced_controls["color_grading"].values())
+        counts[self._curve_group] = sum(getattr(self._state.curves, channel) != getattr(self._defaults.curves, channel)
+                                      for channel in ("rgb", "red", "green", "blue"))
+        counts[self._effects_group] += self._state.effects.vignette_style != 0
+        counts[self._optics_group] += self._state.optics.remove_chromatic_aberration
+        return counts
+
+    def _refresh_changes(self) -> None:
+        counts = self._changed_counts()
+        self.changed_count.setText(f"{sum(counts.values())} 项")
+        for section, count in counts.items():
+            section.set_changed_count(count)
+        for selector, is_changed in (
+            (self.hsl_selector, lambda key: self._state.hsl[HSLColor(key)] != self._defaults.hsl[HSLColor(key)]),
+            (self.grading_selector, lambda key: getattr(self._state.color_grading, key) != getattr(self._defaults.color_grading, key)),
+            (self.curve_panel.channel, lambda key: getattr(self._state.curves, key) != getattr(self._defaults.curves, key)),
+        ):
+            for index in range(selector.count()):
+                label = selector.itemText(index).removesuffix(" •")
+                selector.setItemText(index, f"{label} •" if is_changed(selector.itemData(index)) else label)
+        # Keep the clicked control under the pointer until the drag/reset ends.
+        if not self._active_interaction:
+            self._filter_controls(self.search.text())
+
+    def _modified_filter_changed(self, enabled: bool) -> None:
+        if enabled:
+            for selector in (self.hsl_selector, self.grading_selector, self.curve_panel.channel):
+                if not selector.currentText().endswith(" •"):
+                    changed = next((index for index in range(selector.count()) if selector.itemText(index).endswith(" •")), None)
+                    if changed is not None:
+                        selector.setCurrentIndex(changed)
+        self._filter_controls(self.search.text())
+
+    def _begin_filter_interaction(self, _label: str) -> None:
+        self._active_interaction = True
+
+    def _finish_filter_interaction(self, _label: str) -> None:
+        self._active_interaction = False
+        self._filter_controls(self.search.text())
+
+    def _basic_value_changed(self, key: str, value: float) -> None:
+        setattr(self._state.basic, key, value)
+        self.adjustment_changed.emit(key, value)
+        self._refresh_changes()
+
+    def _advanced_value_changed(self, section: str, key: str, value: object) -> None:
+        setattr(getattr(self._state, section), key, value)
+        self.advanced_adjustment_changed.emit(section, key, value)
+        self._refresh_changes()
+
+    def _curve_value_changed(self, channel: str, curve: object) -> None:
+        setattr(self._state.curves, channel, curve.model_copy(deep=True))
+        self.curve_changed.emit(channel, curve)
+        self._refresh_changes()
 
     def set_enabled_for_image(self, enabled: bool) -> None:
         self.widget().setEnabled(enabled)
@@ -444,6 +581,9 @@ class AdjustmentPanel(QScrollArea):
         self.vignette_style.blockSignals(False)
         self._show_selected_hsl()
         self._show_selected_grading()
+        self._refresh_changes()
+        if self.modified_only.isChecked():
+            self._modified_filter_changed(True)
 
     def _add_advanced_group(self, parent: QVBoxLayout, title: str, section: str, specs: tuple[SliderSpec, ...], keywords: str) -> None:
         group = self._section(parent, title, keywords)
@@ -454,7 +594,7 @@ class AdjustmentPanel(QScrollArea):
         for spec in specs:
             control = ParameterSlider(spec)
             control.value_changed.connect(
-                lambda key, value, section_name=section: self.advanced_adjustment_changed.emit(section_name, key, value)
+                lambda key, value, section_name=section: self._advanced_value_changed(section_name, key, value)
             )
             control.interaction_started.connect(
                 lambda _key, title=group.header.text(): self.interaction_started.emit(f"调整{title}")
@@ -471,18 +611,22 @@ class AdjustmentPanel(QScrollArea):
         values = self._state.hsl[color]
         for key, control in self.hsl_controls.items():
             control.set_value(getattr(values, key))
+        self._filter_controls(self.search.text())
 
     def _hsl_value_changed(self, key: str, value: float) -> None:
         color = self.hsl_selector.currentData()
         setattr(self._state.hsl[HSLColor(color)], key, value)
         self.hsl_changed.emit(color, key, value)
+        self._refresh_changes()
 
     def _show_selected_grading(self) -> None:
         region = self.grading_selector.currentData()
         values = getattr(self._state.color_grading, region)
         for key, control in self.grading_controls.items():
             control.set_value(getattr(values, key))
+        self._filter_controls(self.search.text())
 
     def _grading_value_changed(self, key: str, value: float) -> None:
         setattr(getattr(self._state.color_grading, self.grading_selector.currentData()), key, value)
         self.color_grading_changed.emit(self.grading_selector.currentData(), key, value)
+        self._refresh_changes()

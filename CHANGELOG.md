@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.2.0 - 2026-11-27 — Photo Sets & Reusable Looks / 照片组与调色配方
+
+- Added multi-select opening and multi-photo drag-and-drop, title-bar navigation, `Alt+←` / `Alt+→`, and a photo-picker counter. Revisiting a photo in the current set resumes its own state/history; first recovery from saved work still asks for confirmation.<br>
+  新增多选打开、多图拖入、画布标题栏导航、`Alt+←` / `Alt+→` 与计数跳转；回访当前组内照片续接各自编辑/历史，首次恢复持久记录仍询问。
+- Added persistent named grading recipes with one-step undo when applied. Recipes retain tone/HSL/curves/grading/detail/effects/calibration and leave the target photo's optics, geometry, masks, and watermarks intact.<br>
+  新增可跨启动保存的命名调色配方，应用可一次撤销；包含明暗/HSL/曲线/分级/细节/效果/校准，保留目标照片的光学、几何、蒙版和水印。
+- Added changed-parameter highlighting, group counts, a changed-only filter, individual reset buttons, and grading blending/balance. Improved the empty-canvas open action and histogram labels; horizontal wheel input no longer accidentally zooms the photo.<br>
+  新增已改参数高亮、分组计数、仅看已调整、单项复位及分级融合/平衡；改进空画布打开入口与直方图标签，横向滚轮不再误缩放照片。
+- Added observed AI execution stages and elapsed time, with clearer cancellation state. Cancelled or late results remain unapplied; cloud retry stays manual. JarvisArt remains a separate local service, and Mock is not real image analysis.<br>
+  新增真实 AI 执行阶段、耗时及清晰的取消状态；取消或晚到结果不应用，云端仍只手动重试。JarvisArt 保持独立本地服务，Mock 不冒充真实看图。
+- Added an EXIF export setting, on by default; turning it off removes photographic EXIF including GPS from new exports. Export also protects other originals in the current photo set, and failed session saving blocks navigation rather than discarding edits.<br>
+  新增默认开启的 EXIF 导出开关；关闭后新成片去除摄影 EXIF，包括 GPS。导出同时保护当前照片组内其他原图；会话保存失败时阻止切换，保留编辑。
+- Reduced CPU-rendering temporary allocations and unused calculations. Paired results include 1280 px contrast rendering from **58.63 ms to 30.74 ms**, and basic edits from **198.46 ms to 157.54 ms**; conditions and numerical comparisons are in the benchmark.<br>
+  减少 CPU 渲染临时数组与无用运算。配对测试中，1280 px 对比度编辑由 **58.63 ms 降至 30.74 ms**，基础编辑由 **198.46 ms 降至 157.54 ms**；测试条件与数值差异见性能报告。
+
+[Bilingual release notes / 双语发布说明](docs/RELEASE_1_2.md) · [Renderer benchmark / 渲染性能实测](docs/benchmarks/README.md) · [中文更新日志](CHANGELOG_zh-CN.md)
+
 ## 1.1.1 - 2026-11-17 — Windows packaging / Windows 打包修复
 
 - Prevented the build environment's unrelated ICU libraries from shadowing the Windows ICU used by Qt. Added executable-level startup checks to stop broken packages before release.
